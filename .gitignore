@@ -1,0 +1,30 @@
+# Dependencies and virtual environments
+node_modules/
+.venv/
+.venv-*/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# Build output
+apps/extension/dist/
+apps/extension/media/graph.bundle.js
+
+# Local CodeMRI state: snapshots contain source code, keep them out of Git
+.codemri/
+.codemri-preview/
+
+# Secrets
+.env
+
+# Separately cloned demo fixture (see README, MemMunkDB demo)
+examples/MemMunkDB/
+
+# Editor and OS files. Keep the shared debug/build config.
+.DS_Store
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Tool residue that is not part of the project
+.github/modernize/

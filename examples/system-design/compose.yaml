@@ -1,0 +1,10 @@
+# Architecture fixture: deployment declarations, not a complete runnable stack.
+services:
+  checkout-api:
+    image: codemri-checkout-demo:local
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: checkout

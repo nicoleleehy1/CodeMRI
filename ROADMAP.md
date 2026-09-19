@@ -1,0 +1,210 @@
+# CodeMRI Roadmap
+
+Living plan for building CodeMRI. [README.md](README.md) is the product spec and the source of truth for what ships; this file is the build order. **Update this file in the same change as the work it describes** (see [How to maintain](#how-to-maintain-this-file)).
+
+- **Last updated:** 2026-09-19
+- **Current phase:** Phase 0 — Reproduce and clean up
+- **Next task:** P0.2
+
+## Decisions
+
+Confirmed with the project owner on 2026-09-19.
+
+| Question | Decision |
+|---|---|
+| Deadline | None fixed. HackMIT 2026 is a milestone, not a cliff. Prefer correct foundations over demo shortcuts. |
+| Headline feature | **Agent loop + architecture diff**: `task → impact → context → agent patch → tests → reanalyze → graph diff`. |
+| Sponsor tracks | OpenAI, Token Company, Cognition (Devin), Warp. All four are candidates; each is gated on verifying its real requirements (Phase 5). |
+| Working mode | Solo owner, implemented together with Claude, tasks worked in ID order. |
+
+## Principles
+
+Carried over from the README; they decide close calls.
+
+1. **Never overclaim.** Static edges are "possible behavior", AI edges are "inferred", and observed runtime evidence is a separate class. No agent-savings claim without a benchmark run behind it.
+2. **Local-first.** Analysis, graph, impact, and context need no key or hosted service. AI is optional and is an explicit user action.
+3. **Preserve the working demo.** Every phase ends with `npm run check`, `npm test`, and the F5 MemMunkDB flow green. Changes are additive or migrated, not rewrites.
+4. **One engine, two consumers.** API and MCP read the same snapshots through the same engine code. A feature is not done until both consumers can use it.
+5. **Reading is separate from acting.** MCP code-reading tools never execute repository code or apply patches. Test execution and patch application are explicit, isolated workflow steps.
+6. **Untrusted input.** Repository text (comments, docs, commit messages) is data, never instructions, and keeps its provenance in context packs.
+
+## Baseline (verified 2026-09-19)
+
+What I confirmed by running it, not by reading the README:
+
+- `npm run check` (`tsc --noEmit`) is clean. `npm test` runs the Node tests and `pytest`: 17 Python tests pass, no Node failures.
+- Toolchain: Node 20.20, Python 3.12.5, Java 23, Maven 3.9.14.
+- Engine is small and dense: about 1,400 lines across `packages/engine/codemri/`, `services/`, and `apps/extension/src/`.
+- `examples/MemMunkDB` is cloned locally, has Maven and 21 JUnit tests (`LSMStoreTest`), and is a real git repo.
+- `examples/shop` and `examples/system-design` have **no tests and no `package.json`**, so they cannot host a patch → test loop as-is.
+- The repository has **no commits** yet, and `.venv-old/`, `.DS_Store`, `.vscode/`, and `.github/modernize/` are untracked and not all ignored.
+- Not yet re-verified: the manual F5 acceptance flow (it needs VS Code).
+
+## Gaps found in the current code
+
+These are why the phases are ordered the way they are. Each has an owning task.
+
+| Gap | Where | Impact | Task |
+|---|---|---|---|
+| Symbol IDs embed byte offsets (`path::name@byte`) | `analyzer.py` | Any edit changes IDs, so snapshot diff would report everything as changed | P1.1 |
+| One snapshot per repo; reanalysis overwrites it | `store.py` | No "before" to diff against | P2.1 |
+| `.gitignore` not interpreted; only a fixed `SKIP` set | `analyzer.py`, `architecture.py` | Ignored secrets can reach analysis and AI excerpts | P1.3 |
+| `Edge` has only `source/target/kind`; evidence and labels live in the untyped `layers` dict | `models.py` | No first-class evidence class (static / inferred / observed) | P1.2 |
+| Impact only follows `calls` edges | `context.py` | Ignores imports, contracts, tests | P1.4 |
+| `compile_context` re-tokenizes the whole output per candidate and packs whole symbols only | `context.py` | Quadratic cost; no signature-only mode; no dedupe | P4.1 |
+| `repository_tokens` counts module sources only | `context.py` | Reduction figure may be misleading; must be defined | P4.1 |
+| MCP `get_symbol` raises `StopIteration` on an unknown ID; `get_architecture` returns whole graph with source | `services/mcp/server.py` | Poor agent ergonomics, large responses | P0.4 |
+| MCP `analyze_repository` docstring says TS/JS but `analyze` also runs Java | `services/mcp/server.py` | Misleading tool description | P0.4 |
+| Allowed-root check duplicated in API and MCP; `synthesize` (AI) not exposed over MCP | both | Drift risk; MCP/API parity gap | P0.4 |
+| Extension analysis runs are manual; snapshots go stale on edit | `extension.ts` | Loop needs explicit refresh and freshness signal | P3.6 |
+
+## Phase overview
+
+```text
+P0 Reproduce ──► P1 Foundations ──► P2 Snapshots + Diff ──► P3 Tests + Agent loop
+                                                                 │
+                            P6 Incremental + scale ◄── P5 Sponsors ◄── P4 Context + Benchmark
+                                                                 │
+                                                          P7 Backlog (history, PR mode, health, data flow, runtime)
+```
+
+Why this order: the diff needs stable IDs and retained snapshots; the loop needs tests and the diff; the benchmark needs the loop harness; sponsor integrations only count when they sit in a working, measured flow.
+
+Status legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[-]` dropped (with reason in the log).
+
+---
+
+## Phase 0 — Reproduce and clean up
+
+**Goal:** a trustworthy starting point. Nothing new ships here.
+**Exit:** fresh-clone setup works from README steps; first commit exists; README claims match reality.
+
+- [x] **P0.1 Initial commit and repo hygiene.** Ignored `.venv-*/`, `.DS_Store`, `.vscode/*` except `launch.json` and `tasks.json`, and `.github/modernize/` (a VS Code tool-use recorder hook, not project code; ignored rather than deleted). Committed the tree as the baseline (56 files). *Done when:* `git status` is clean and `git ls-files` contains no venvs, caches, or snapshots. **Done 2026-09-19.**
+- [ ] **P0.2 Fresh-setup reproduction.** In a scratch clone, follow README Quick start exactly (`venv`, `pip install -r requirements-lock.txt`, `npm ci`, `npm run build`, start uvicorn, warm tiktoken). Record any step that fails or is missing. *Done when:* the steps work verbatim, or README is corrected.
+- [ ] **P0.3 Manual F5 acceptance pass.** Run the README demo checklist against MemMunkDB and `examples/system-design` in VS Code. This is the one thing automated tests do not cover. Log pass/fail per checklist item in the [log](#log). *Done when:* every checklist item has a recorded result.
+- [ ] **P0.4 Small correctness fixes.** MCP `get_symbol` returns a clear error for unknown IDs; correct the `analyze_repository` docstring; extract the allowed-root check into one shared function used by API and MCP; add a compact `get_architecture` option (no source bodies) so agents are not handed the whole graph. *Done when:* tests cover each, and API/MCP share the helper.
+- [ ] **P0.5 API/MCP parity test.** One test analyzes via API, then reads the same snapshot through the MCP tool functions (same `CODEMRI_CACHE`), and asserts equal results. *Done when:* the test passes and lives in `tests/`.
+- [ ] **P0.6 README truthfulness sweep.** Confirm each line of "What works now" and "Validation" against code and tests; fix any that are aspirational. Add a short pointer to this file. *Done when:* every claim maps to a test or a named manual check.
+
+## Phase 1 — Foundations for diff and the loop
+
+**Goal:** the graph contract can support comparison, evidence classes, and safe input.
+**Exit:** schema v3 documented and migrated; identity survives a no-op reanalysis and a line-shifting edit; ignored files are excluded.
+
+- [ ] **P1.1 Stable symbol identity.** Replace byte-offset IDs with qualified identity (path + container chain + name + kind + arity, with a deterministic disambiguator for true collisions). Provide explicit old→new mapping for rename/move detection later. Test: reanalysis is identical; inserting lines above a symbol keeps its ID; overloads stay distinct. Test with non-ASCII source to keep UTF-16 columns correct. *Done when:* the fixtures above pass and existing tests are updated.
+- [ ] **P1.2 Schema v3.** Add `snapshot_id`, `created_at`, `analyzer_version`, and a config fingerprint; give `Edge` first-class `evidence` (`static | inferred | observed`), optional `label`, and source location; record unresolved references with a reason instead of only a warning string. Keep v2 snapshots loadable via migration. Mirror the change in `apps/extension/src/extension.ts`. *Done when:* v2 files load, v3 round-trips through API, MCP, and the extension.
+- [ ] **P1.3 `.gitignore` and secret exclusion.** Interpret `.gitignore` during inventory and exclude common secret files (`.env*`, key files) from analysis and from AI excerpts. Record what was skipped in diagnostics. *Done when:* a fixture with an ignored secret never appears in graph, snapshot, or AI excerpt input. This gates any wider AI use.
+- [ ] **P1.4 Typed-edge impact.** Refactor `impact()` to traverse by edge kind and direction (calls, imports, contains, and later tests), keep the reasons, and cover Java call edges. Keep the current lexical seeding and 3-hop bound as the default so existing behavior does not regress. *Done when:* existing impact tests pass unchanged plus new cases for import edges and Java.
+- [ ] **P1.5 Accuracy fixtures.** Small labeled fixtures for import aliases, shadowing, re-exports, default imports, and Java overloads, with expected edges and expected unresolved cases. This becomes the regression baseline for "index quality". *Done when:* a report lists true/false/missing edges per fixture.
+
+## Phase 2 — Retained snapshots and architecture diff
+
+**Goal:** answer "what changed structurally between these two states?"
+**Exit:** diff of two real snapshots is correct on fixtures and visible in the extension.
+
+- [ ] **P2.1 Retained snapshot store.** Store `.codemri/<repo_id>/<snapshot_id>.json` plus a latest pointer, keep the last N (configurable), and still read legacy single-file snapshots. Writes stay atomic. *Done when:* two analyses of a changed repo yield two retrievable snapshots.
+- [ ] **P2.2 Diff engine.** `diff(before, after)` reports added, removed, and modified symbols (signature change), added and removed edges, new dependency cycles, and affected entry points. Use P1.1 identity so line shifts are not new symbols. Include explicit rename/move matching with a confidence note. *Done when:* fixture pairs for add, remove, move, rename, and signature change all diff correctly.
+- [ ] **P2.3 API and MCP surface.** `POST /graphs/{repo_id}/diff` and MCP `diff_snapshots`, keeping existing tool names untouched. *Done when:* both return the same result for the same pair (P0.5-style test).
+- [ ] **P2.4 Extension diff view.** Overlay added/removed/changed on the architecture map, with evidence links on changed edges and a stale-state indicator. *Done when:* verified manually in F5 on MemMunkDB with a scripted edit.
+- [ ] **P2.5 Boundary rules (optional).** Explicit config for allowed dependency directions (for example UI → API → service → DB); diff flags violations. Observed conventions stay suggestions only. Defer if Phase 3 is blocked on it.
+
+## Phase 3 — Tests and the agent loop (headline)
+
+**Goal:** a real, recorded run of `task → impact → context → patch → tests → reanalyze → diff`.
+**Exit:** one end-to-end run on MemMunkDB with a real patch, real test results, and a real graph diff, with all artifacts saved.
+
+- [ ] **P3.1 Test discovery.** Represent tests as graph nodes with `TESTED_BY` edges from imports, direct calls, and naming conventions. Label as heuristic. Start with JUnit (MemMunkDB), then pytest and `node:test`. Wording: "no identified tests", never "untested". *Done when:* MemMunkDB's `LSMStoreTest` links to `LSMStore` symbols.
+- [ ] **P3.2 Impacted-test selection.** From impact results, return the associated tests with the path that justifies each. *Done when:* a change to an `LSMStore` method selects the relevant tests, and an unrelated change selects none.
+- [ ] **P3.3 Runnable TS fixture.** Add `package.json` and real tests to `examples/shop` (needs a TS runner such as `tsx`, because Node 20 does not strip types) so the TS demo can also exercise the loop. *Done when:* `npm test` inside `examples/shop` runs and passes.
+- [ ] **P3.4 Test runner.** Explicit, user-initiated execution of a selected test set (`mvn -Dtest=…`, `pytest`, `node --test`) with timeout, captured output, and structured results. Runs in an isolated git worktree or copy, never the user's checkout. Not exposed as a read-only MCP tool. *Done when:* results are stored and shown; a failing test is reported faithfully.
+- [ ] **P3.5 Loop orchestrator.** A CLI (`codemri loop …`) that takes a task, calls impact and context, invokes a configurable agent command in an isolated worktree, collects the patch, runs selected tests, reanalyzes, and emits the diff. Agent command is a template so any agent (Codex, Devin, Warp, others) can plug in. Records prompts, patch, test output, and timings. *Done when:* a scripted no-op agent proves the plumbing, then a real agent completes one task.
+- [ ] **P3.6 Freshness and refresh.** Extension shows snapshot freshness and offers an explicit **Reanalyze** after a loop run; surfaces the loop result (patch summary, test status, diff). Keep the "stale" warning until reanalysis finishes. *Done when:* the loop result is viewable in VS Code.
+- [ ] **P3.7 Recorded demo run.** Save one full run under `benchmarks/runs/` labeled as recorded. *Done when:* the demo can replay it and it is clearly marked precomputed.
+
+## Phase 4 — Context compiler v2 and benchmark
+
+**Goal:** measure whether CodeMRI context helps, without reducing correctness.
+**Exit:** at least three tasks, both variants, repeated runs, raw records preserved.
+
+- [ ] **P4.1 Compiler v2.** Tokenize the serialized pack once per candidate set (not per append); reserve budget for task and metadata; full source for edit targets, signatures for peripheral symbols; dedupe overlapping ranges; report shortfalls when mandatory content does not fit; define `repository_tokens` precisely. Keep current output shape compatible. *Done when:* existing context tests pass and new tests cover shortfall and signature mode.
+- [ ] **P4.2 Retrieval evaluation.** Labeled task → relevant-symbol sets on the fixtures; report found, missed, and unnecessary. Decide from data whether embeddings are worth adding (README: measure before semantic ranking). *Done when:* a repeatable script prints precision and recall per task.
+- [ ] **P4.3 Context UI.** Budget slider, included/supporting/excluded groups with labels alongside color, copy Markdown, export JSON. *Done when:* verified manually in F5.
+- [ ] **P4.4 Benchmark harness.** Under `benchmarks/`: fixed repo revision, task definitions, baseline vs CodeMRI runners with the same agent, model, tools, and timeout, plus raw usage capture. Reuses the P3.5 orchestrator. Do not seed CodeMRI runs with the known patch or hidden tests. *Done when:* one task runs both variants and produces a results row.
+- [ ] **P4.5 Benchmark runs and report.** At least three tasks, repeated, median and range, preprocessing cost reported separately and included in first-use totals. Report failures too. *Done when:* the README results table is filled from `benchmarks/` records, not hand-entered.
+
+## Phase 5 — Sponsor integrations
+
+**Gate:** none of these start until the owner supplies the current 2026 challenge pack and its requirements are recorded here. The README treats all four alignments as unverified. Add an integration only if it is part of the working flow.
+
+- [ ] **P5.0 Verify requirements.** Record each sponsor's actual rules, eligibility, and required integration in the [log](#log). *Owner input needed.*
+- [ ] **P5.1 OpenAI.** Exercise the AI architecture generator against a real key and model once (it is only mock-tested today); add optional semantic enrichment only if P4.2 says it helps; keep a record of how Codex assisted implementation and testing if the track requires it. *Done when:* a live generation is run and validated, and the README stops saying "mock-tested only".
+- [ ] **P5.2 Token Company.** Feed the P4 measurements (including preprocessing cost) into whatever the track requires; verify what "product use" means before building. *Done when:* end-to-end usage and cost are measured.
+- [ ] **P5.3 Cognition (Devin).** Real Devin integration consuming a context pack (through the P3.5 agent command template or its API). Exported context alone does not count. *Done when:* a Devin session completes a task with a CodeMRI pack.
+- [ ] **P5.4 Warp.** Verify MCP client configuration for Warp rather than assuming the generic example works; document a working setup. *Done when:* Warp calls the CodeMRI tools in a real session.
+
+## Phase 6 — Incremental indexing and scale
+
+**Goal:** make analysis fast and the UI responsive on larger repositories.
+
+- [ ] **P6.1 Content-hash cache.** Skip unchanged files, re-extract changed ones, remove deleted symbols and edges, include analyzer and grammar and schema versions in cache keys.
+- [ ] **P6.2 Dependent invalidation.** Re-resolve edges when exports, imports, or signatures change.
+- [ ] **P6.3 Atomic partial publish.** Never mix old nodes with new edges across a refresh.
+- [ ] **P6.4 Bounded rendering.** Graph virtualization and node limits in the webview; large-repo fixture and budgets.
+- [ ] **P6.5 Freshness and rebuild UI.** Show index freshness; provide full rebuild.
+- [ ] **P6.6 Language depth.** TypeScript language-service resolution and full Java overload and type resolution, driven by the P1.5 fixtures.
+
+## Phase 7 — Backlog (P2)
+
+Not scheduled. Pull an item forward only when an earlier phase makes it cheap.
+
+- Git history, "Why does this exist?", and two-snapshot time machine
+- PR mode (merge-base diff → impact → summary → tests → context)
+- Repository health dashboard (cycles, coupling, high-impact symbols without identified tests)
+- Data-flow mode and sensitive-data path tracing
+- Static candidate path view; runtime and coverage ingestion (observed edges)
+- Natural-language graph queries returning answer plus subgraph
+- Additional languages and framework adapters
+- Shared annotations, task memory, secure remote graph service
+
+---
+
+## Demo track
+
+Keep two scripts in sync with what actually works.
+
+| Version | Available after | Content |
+|---|---|---|
+| Demo v1 (README 90-second demo) | P0 | Java architecture → drilldown → evidence → TS impact → context pack |
+| Demo v2 | P3 | Replace part of navigation with a recorded patch → tests → diff, clearly labeled as recorded |
+| Demo v3 | P4 | Add measured token and correctness results from the benchmark |
+
+Do not make network latency or billing a dependency of the main demo. AI architecture generation stays an optional separate segment.
+
+## Risks and open questions
+
+| # | Item | Status |
+|---|---|---|
+| R1 | Sponsor requirements are unverified. | Blocks Phase 5; needs owner input (P5.0). |
+| R2 | Which agent runs the first real loop (Codex, Devin, Warp, or a headless CLI)? | Decide at start of P3.5. |
+| R3 | Stable IDs (P1.1) touch every consumer. High regression risk. | Mitigate with the schema migration and fixture tests before merging. |
+| R4 | Test-to-code mapping is heuristic, so impacted-test selection can miss tests. | Label as heuristic; run the broader suite as a backstop in benchmarks. |
+| R5 | Isolation for running test and agent commands. | Use git worktrees now; consider a stronger sandbox only if untrusted repos become a target. |
+| R6 | `.github/modernize/` origin and whether to keep it. | Resolved in P0.1: tool residue, ignored. The files remain on disk; delete them if you do not use that VS Code extension. |
+| R7 | The F5 flow cannot be automated here; it depends on manual passes. | Track results in the log after each phase. |
+
+## How to maintain this file
+
+- When a task starts, mark `[~]` and update **Current phase** and **Next task** at the top.
+- When it finishes, mark `[x]`, add a log entry with the evidence (test name, command, commit).
+- If reality contradicts the plan (a task is wrong, bigger than expected, or unnecessary), change the plan in the same commit and say why in the log. Do not leave stale tasks.
+- New work goes into the phase where it belongs; anything unscheduled goes in Phase 7.
+- Keep README's "What works now" limited to shipped, tested behavior; move a feature there only when its task is `[x]`.
+- A phase is done only when its exit line is true and `npm run check`, `npm test`, and the F5 flow pass.
+
+## Log
+
+Newest first. One entry per meaningful change to plan or status.
+
+- **2026-09-19** — P0.1 done. Rewrote `.gitignore` (grouped; added `.venv-*/`, `.DS_Store`, `.vscode/*` with the two shared files re-included, `.github/modernize/`). Audited the staged set before committing: 56 files, no venvs, caches, snapshots, or secret patterns. Committed `AGENTS.md` (a read-only ChatGPT project mirror) unchanged so the tree is clean; if it gets replaced on a future sync, expect a diff there. `.venv-old/` (78 MB) is ignored but still on disk and can be deleted.
+
+- **2026-09-19** — Created roadmap. Read README, verified baseline (`tsc` clean, 17 pytest passing, Node tests passing, Java 23 + Maven present). Found that TS fixtures have no tests and only MemMunkDB can run a patch → test loop today (drives P3.1 and P3.3). Recorded owner decisions: no deadline, agent loop + architecture diff as headline, all four sponsors as candidates, solo build with Claude.
