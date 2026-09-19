@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -8,6 +9,7 @@ from codemri.context import impact, compile_context
 
 app = FastAPI(title="CodeMRI", version="0.1.0")
 store = Store()
+STARTED = time.strftime("%Y-%m-%d %H:%M:%S")
 
 class AnalyzeRequest(BaseModel):
     root: str
@@ -26,6 +28,13 @@ def load(repo_id):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/ai/status")
+def ai_status():
+    """What this server process sees for AI setup. Never returns the key, only whether it is set."""
+    return {"api_key_set": bool((os.environ.get("OPENAI_API_KEY") or "").strip()),
+            "model": (os.environ.get("CODEMRI_ARCHITECTURE_MODEL") or "").strip() or None,
+            "pid": os.getpid(), "parent_pid": os.getppid(), "started": STARTED, "cwd": os.getcwd()}
 
 @app.post("/analyze")
 def scan(request: AnalyzeRequest):

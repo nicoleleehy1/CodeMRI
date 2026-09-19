@@ -3,6 +3,16 @@ from services.api import main
 from codemri.store import Store
 from tests.test_engine import DEMO
 
+def test_ai_status_reports_configuration_without_the_key(monkeypatch):
+    client=TestClient(main.app)
+    monkeypatch.setenv('OPENAI_API_KEY','sk-secret-value')
+    monkeypatch.setenv('CODEMRI_ARCHITECTURE_MODEL','test-model')
+    body=client.get('/ai/status').json()
+    assert body['api_key_set'] is True and body['model']=='test-model'
+    assert 'sk-secret-value' not in client.get('/ai/status').text
+    monkeypatch.setenv('CODEMRI_ARCHITECTURE_MODEL','')
+    assert client.get('/ai/status').json()['model'] is None
+
 def test_api_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(main,'store',Store(tmp_path))
     monkeypatch.setenv('CODEMRI_ALLOWED_ROOT',str(DEMO.parent))

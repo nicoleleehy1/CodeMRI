@@ -3,8 +3,8 @@
 Living plan for building CodeMRI. [README.md](README.md) is the product spec and the source of truth for what ships; this file is the build order. **Update this file in the same change as the work it describes** (see [How to maintain](#how-to-maintain-this-file)).
 
 - **Last updated:** 2026-09-19
-- **Current phase:** Phase 0 — Reproduce and clean up
-- **Next task:** P0.2
+- **Current phase:** Track A — AI architecture (priority, runs ahead of the rest of Phase 0)
+- **Next task:** live re-run to measure A4a, then A1b, then A3 before pointing the AI at any other repository
 
 ## Decisions
 
@@ -16,6 +16,11 @@ Confirmed with the project owner on 2026-09-19.
 | Headline feature | **Agent loop + architecture diff**: `task → impact → context → agent patch → tests → reanalyze → graph diff`. |
 | Sponsor tracks | OpenAI, Token Company, Cognition (Devin), Warp. All four are candidates; each is gated on verifying its real requirements (Phase 5). |
 | Working mode | Solo owner, implemented together with Claude, tasks worked in ID order. |
+| Priority (2026-09-19) | **AI-generated architecture graph (Track A) comes first.** The local map (`system_map.py`) only looks good on MemMunkDB: it uses LSM vocabulary and fixed group names, and other repos degrade to directory names. It stays as a labelled offline fallback and is no longer tuned. |
+| AI approach | Single-pass GitDiagram-style pipeline first, then a tool-using exploration loop. GitDiagram is MIT (rev `1b97a5e`); its ideas are ported to Python, not its TypeScript. |
+| Provider and model | OpenAI Responses API, `gpt-5.6-luna` (GitDiagram's default for the same job, cheapest of the new family; about $0.02 per run by upstream's price table, which may be stale). |
+| Key handling | The owner runs anything that uses `OPENAI_API_KEY` and pastes the output; Claude never reads `.env`. Tests use a mocked provider. |
+| Order vs Phase 0 | Only P0.2 runs before Track A. P0.3 (manual F5) would test a demo that is about to change, and P0.4/P0.6 touch the same files as Track A, so they wait until A6. |
 
 ## Principles
 
@@ -74,9 +79,26 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[-]` dro
 
 ---
 
+## Track A — AI-generated architecture (priority)
+
+**Goal:** point CodeMRI at any repository and get a source-grounded architecture map that does not depend on rules written for one project.
+**Exit:** live runs on three different repositories (MemMunkDB, `examples/system-design`, one unfamiliar repository) with every relationship citing real source, and a labelled comparison of single-pass against agentic exploration.
+
+- [x] **A0. Live-run plumbing.** `GET /ai/status` (key set or not, model name, pid; never the key); the missing-config error names the missing variable; provider errors surface OpenAI's message with `sk-…` redacted. *Done 2026-09-19.* Found that `--env-file` never overrides variables already in the shell and is read only at startup.
+- [x] **A1. Validation repair and retry-with-feedback.** The first live run reached the model and then failed our validator ("unknown group or source path"). Directories are now accepted and expand to their files (so drilldown still works), unresolvable node paths are stripped, dangling edges and unverifiable citations are dropped (an edge with no valid citation is removed), and structural faults (schema, duplicate ids, unknown groups, invalid JSON) trigger one retry that returns the issues to the model. Every run writes `.codemri/ai-last-run.json` (raw output, issues, repairs; never the key). *Done 2026-09-19.* **Correction:** I first guessed the failure was a directory path. The run log showed the real cause was an empty group on the external actor (see A1b); directory handling and path stripping were never exercised live (0 repairs), so they remain mock-tested only.
+- [x] **A2. First live run (MemMunkDB).** *Done 2026-09-19.* `gpt-5.6-luna`, 13 files sent, 13 nodes, 22 edges, 5 groups, 2 attempts. Not hardcoded: none of the diagram's labels exist in our code (the local map's rules are unused in AI mode), and it differs from the local map. Structure and semantics spot-checked as broadly right (Bloom filter is real Guava code, size-tiered compaction and tombstone dropping are real). **Weakness: only 14 of 31 citations (45%) land on a line of real code**; 7 are blank lines and 10 are comments, imports or braces. Cause: the excerpts carry no line numbers, so the model estimates them. Fixed by A4a.
+- [ ] **A1b. Ungrouped actors.** Attempt 1 failed because the model put the HTTP client in group `""`. The prompt says "keep external initiating actors ungrouped" but our schema requires a real group, so every run with an actor spends a second API call. Treat an empty group as ungrouped (the renderer already has a fallback group) instead of retrying.
+- [ ] **A3. Ignore and secret hygiene before sending code.** Interpret `.gitignore`; skip `.venv-*` and other virtualenvs (the analyzer scanned `.venv-old` as source and produced 1,681 nodes); redact secret-shaped strings in excerpts. This is P1.3 pulled forward.
+- [~] **A4a. Citations the user can trust.** Implemented and mock-tested (29 tests); **awaiting a live re-run to measure** against the 45% baseline from A2. Two language-agnostic parts: (1) excerpts are line-numbered (`N| code`), so the model reads numbers instead of estimating; (2) every citation now carries a `quote`, the exact text of the cited line. We locate the quote in the file, move the citation to the closest matching line, and drop it if the quote is not found on an acceptable line (not blank, not punctuation-only, not a comment in a language whose syntax we know, and an import only counts for IMPORTS or DEPENDS_ON). An edge left with no verified citation is dropped. Chosen over matching the cited line against the target's name because that fails on abbreviations (`wal.append` is the correct citation for "Write-Ahead Log"). Unlisted file types (docs, markup, unfamiliar languages) only have to avoid blank and brace-only lines. Run `python scripts/citation_quality.py` after each live run. Limit: verification proves the cited line exists and contains the quote, not that it proves the claim.
+- [ ] **A4b. Excerpt selection.** Replace README-first-then-alphabetical truncation with GitDiagram-style selection: favour substantive runtime modules, spread excerpts across long files, keep imports for sampled calls, report exactly what was and was not sampled. Needed for repositories larger than the 140k-character budget; MemMunkDB (13 files) fits entirely, so this is untested.
+- [ ] **A5. Reasoning effort and cost.** Configurable reasoning effort (default medium, as upstream), and report token usage and estimated cost from the API response.
+- [ ] **A6. Extension UX.** Show mode, model, attempts, coverage, and repairs; clearer progress and failure messages; document `/ai/status` in the README API table. From the first live diagram: edges take long looping routes around the canvas and cross nodes, and every edge is dashed because AI relationships are marked inferred by design, so add a legend explaining that. Also show each citation's `quote` next to `path:line` in the evidence list, so a reader sees the proving line without opening the file.
+- [ ] **A7. Agentic exploration.** A tool-using loop (`list_dir`, `read_file`, `search`) with step and token budgets, feeding the same validator and repair path. Read-only tools, confined to the repository root.
+- [ ] **A8. Compare and decide.** Single-pass against agentic on the three repositories: relationship accuracy against hand checks, cost, and time. Record results and keep the winner as default.
+
 ## Phase 0 — Reproduce and clean up
 
-**Goal:** a trustworthy starting point. Nothing new ships here.
+**Goal:** a trustworthy starting point. Nothing new ships here. Only P0.2 is scheduled before Track A; the rest resumes after A6.
 **Exit:** fresh-clone setup works from README steps; first commit exists; README claims match reality.
 
 - [x] **P0.1 Initial commit and repo hygiene.** Ignored `.venv-*/`, `.DS_Store`, `.vscode/*` except `launch.json` and `tasks.json`, and `.github/modernize/` (a VS Code tool-use recorder hook, not project code; ignored rather than deleted). Committed the tree as the baseline (56 files). *Done when:* `git status` is clean and `git ls-files` contains no venvs, caches, or snapshots. **Done 2026-09-19.**
@@ -204,6 +226,12 @@ Do not make network latency or billing a dependency of the main demo. AI archite
 ## Log
 
 Newest first. One entry per meaningful change to plan or status.
+
+- **2026-09-19** — A4a implemented (mock-tested, live measurement pending): numbered excerpts plus quote-verified citations, with a `scripts/citation_quality.py` report. Design constraint from the owner: it must generalise beyond LSM trees, so the rules use no vocabulary or per-project heuristics; comment syntax is keyed by file extension and unknown types fall back to the minimal blank/brace rule. A stricter alternative (require the cited line to mention the target's name) was rejected because it fails on abbreviations.
+
+- **2026-09-19** — A2 done: the AI workflow runs live on MemMunkDB and the diagram renders. Read the run log to check the "not hardcoded" question (it holds) and to measure quality (citations weak: 45% on real code). Corrected the A1 entry: the original failure was an empty actor group, not a directory path; the retry loop is what made the run succeed. Added A1b and split A4 into A4a (trustworthy citations) and A4b (excerpt selection).
+
+- **2026-09-19** — Track A started. Debugged the first live run in three steps: (1) the backend reported the model as missing although `.env` was correct, so I added `/ai/status` and named-variable errors; (2) once configuration loaded, OpenAI answered and our validator rejected the graph because the prompt allows directory paths while the validator did not; (3) ported GitDiagram's repair-and-retry approach (A1). Twenty-five Python tests pass; live behaviour after A1 is unverified until A2. Also noted that `.env.example` had been filled with the real values during setup; it was restored and never committed.
 
 - **2026-09-19** — P0.1 done. Rewrote `.gitignore` (grouped; added `.venv-*/`, `.DS_Store`, `.vscode/*` with the two shared files re-included, `.github/modernize/`). Audited the staged set before committing: 56 files, no venvs, caches, snapshots, or secret patterns. Committed `AGENTS.md` (a read-only ChatGPT project mirror) unchanged so the tree is clean; if it gets replaced on a future sync, expect a diff there. `.venv-old/` (78 MB) is ignored but still on disk and can be deleted.
 
