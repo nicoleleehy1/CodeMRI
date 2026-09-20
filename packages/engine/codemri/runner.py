@@ -193,8 +193,8 @@ class BoundedCapture:
                 while self.size - len(self.chunks[0]) >= self.limit and len(self.chunks) > 1:
                     self.size -= len(self.chunks.pop(0)); self.truncated = True
 
-    def text(self) -> str:
-        self.thread.join()
+    def text(self, timeout: float | None = None) -> str:
+        self.thread.join(timeout)
         out = ''.join(self.chunks)
         return out if not self.truncated and len(out) <= self.limit else out[-self.limit:]
 
@@ -221,13 +221,20 @@ def run_process(args: list[str], cwd: Path, env: dict, timeout: int, stdin_text:
             pass
         finally:
             proc.stdin.close()
+    deadline = time.monotonic() + timeout
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_tree(proc)
         proc.wait()
-        raise subprocess.TimeoutExpired(args, timeout, output=out.text(), stderr=err.text())
-    return subprocess.CompletedProcess(args, proc.returncode, out.text(), err.text())
+        raise subprocess.TimeoutExpired(args, timeout, output=out.text(5), stderr=err.text(5))
+    # The launcher is done; descendants that inherited the pipes (a backgrounded server) would keep them open
+    # forever, so give the group the remaining budget, then kill it and stop draining.
+    out.thread.join(max(0.0, deadline - time.monotonic())); err.thread.join(max(0.0, deadline - time.monotonic()))
+    if out.thread.is_alive() or err.thread.is_alive():
+        kill_tree(proc)
+        out.thread.join(5); err.thread.join(5)
+    return subprocess.CompletedProcess(args, proc.returncode, out.text(0), err.text(0))
 
 
 def kill_tree(proc: subprocess.Popen, grace: float = 3.0) -> None:

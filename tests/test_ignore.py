@@ -1,4 +1,5 @@
 """A3 / P1.3: ignored and secret files never reach the graph, the snapshot, or AI excerpt input."""
+import shutil
 import json
 from codemri.analyzer import analyze
 from codemri.architecture import inventory
@@ -114,3 +115,37 @@ def test_fallback_gitignore_handles_double_star_like_git():
     assert gitmatch('a/b/c.log', '**/c.log') and gitmatch('c.log', '**/c.log')
     assert not gitmatch('src/deep/a.js', 'src/*.js') and gitmatch('src/a.js', 'src/*.js')
     assert gitmatch('dist/nested/file', 'dist')  # directory pattern covers everything beneath it
+
+
+def test_copy_applies_ignore_rules_to_files_created_after_copying(tmp_path):
+    import subprocess
+    from codemri.ignore import write_copy_marker
+    root = tmp_path / 'repo'
+    (root / 'src').mkdir(parents=True)
+    (root / '.gitignore').write_text('generated/\nsrc\n')
+    (root / 'src/main.ts').write_text('export const a = 1;\n')
+    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+    subprocess.run(['git', 'add', '.gitignore', '-f', 'src/main.ts'], cwd=root, check=True)
+    copy = tmp_path / 'copy'
+    shutil.copytree(root, copy, ignore=shutil.ignore_patterns('.git'))
+    assert write_copy_marker(root, copy)
+    (copy / 'generated').mkdir()
+    (copy / 'generated/client.ts').write_text('export const g = 1;\n')
+    (copy / 'src/new.ts').write_text('export const b = 2;\n')
+    files = walk_repository(copy).files
+    assert 'src/main.ts' in files            # tracked file matching a broad rule stays visible
+    assert 'generated/client.ts' not in files  # new path matching .gitignore is ignored
+    assert 'src/new.ts' not in files          # new untracked path under an ignored pattern is ignored
+
+
+def test_run_process_does_not_hang_on_backgrounded_descendant(tmp_path):
+    from codemri.runner import run_process, scrubbed_env
+    import time
+    (tmp_path / 'bg.py').write_text(
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "print('launcher done')\n")
+    started = time.monotonic()
+    proc = run_process(['python3', 'bg.py'], tmp_path, scrubbed_env(), timeout=3)
+    assert proc.returncode == 0 and 'launcher done' in proc.stdout
+    assert time.monotonic() - started < 15

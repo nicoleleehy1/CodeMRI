@@ -150,9 +150,15 @@ class Ignorer:
     def __init__(self, root: Path):
         self.root = root
         self.rules: list[Rule] = []
+        self.tracked: set[str] | None = None
         self.git_ignored: set[str] | None = git_ignored_paths(root)
         if self.git_ignored is None:
             self.git_ignored = copied_ignored_paths(root)
+            if self.git_ignored is not None:
+                # A copy: git's answer covers what existed at copy time; new paths (agent output) fall back to the
+                # .gitignore rules, except tracked files, which git keeps visible regardless of patterns.
+                self.tracked = copied_tracked_paths(root)
+                self.load(root, '')
         if self.git_ignored is None:
             self.load(root, '')
 
@@ -166,7 +172,10 @@ class Ignorer:
 
     def ignored(self, relative: str, is_dir: bool) -> bool:
         if self.git_ignored is not None:
-            return relative in self.git_ignored or any(relative.startswith(p + '/') for p in self.git_ignored)
+            if relative in self.git_ignored or any(relative.startswith(p + '/') for p in self.git_ignored):
+                return True
+            if self.tracked is None or relative in self.tracked or any(t.startswith(relative + '/') for t in self.tracked):
+                return False
         result = False
         for rule in self.rules:
             if rule.matches(relative, is_dir):
@@ -192,6 +201,7 @@ def git_ignored_paths(root: Path) -> set[str] | None:
 
 
 COPY_MARKER = Path('.codemri-copy') / 'git-ignored.txt'
+TRACKED_MARKER = Path('.codemri-copy') / 'git-tracked.txt'
 
 
 def write_copy_marker(source_root: Path, copy_root: Path) -> bool:
@@ -203,7 +213,23 @@ def write_copy_marker(source_root: Path, copy_root: Path) -> bool:
     marker = Path(copy_root) / COPY_MARKER
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text('\n'.join(sorted(ignored)), encoding='utf-8')
+    try:
+        out = subprocess.run(['git', '-C', str(source_root), 'ls-files', '-z'], capture_output=True, timeout=30, check=True)
+        tracked = sorted(p.decode('utf-8', errors='replace') for p in out.stdout.split(b'\0') if p)
+        (Path(copy_root) / TRACKED_MARKER).write_text('\n'.join(tracked), encoding='utf-8')
+    except (OSError, subprocess.SubprocessError):
+        pass
     return True
+
+
+def copied_tracked_paths(root: Path) -> set[str] | None:
+    marker = root / TRACKED_MARKER
+    if not marker.is_file():
+        return None
+    try:
+        return {line for line in marker.read_text(encoding='utf-8').splitlines() if line}
+    except OSError:
+        return None
 
 
 def copied_ignored_paths(root: Path) -> set[str] | None:
