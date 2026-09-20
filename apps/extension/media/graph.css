@@ -192,3 +192,4 @@ body > section[hidden], body > main[hidden] { display:none !important; }
 
 .create-edge-label-bg { fill:var(--vscode-editor-background,#101820); stroke:none; }
 .create-edge-line { stroke-linejoin:miter; stroke-linecap:butt; }
+#testResults{margin-top:14px;padding:12px 14px;border:1px solid #ffffff18;border-radius:6px}#testResults h3{margin:0 0 6px;font-size:13px}#testResults ol{margin:0;padding-left:18px}.test-run{margin:8px 0}.test-run pre{max-height:220px;margin:4px 0 0}.test-passed>strong{color:#5dd9b6}.test-failed>strong,.test-timeout>strong,.test-error>strong{color:#ff7b72}.test-no_tests>strong{color:#ffb454}

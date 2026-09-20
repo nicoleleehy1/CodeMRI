@@ -29,9 +29,9 @@ CLASSES={'class_declaration','interface_declaration','enum_declaration','record_
 METHODS={'method_declaration','constructor_declaration'}
 
 
-def extend_java(root, graph):
+def extend_java(root, graph, listing=None):
     from .architecture import inventory
-    files,_=inventory(root)
+    files,_=inventory(root, listing)
     classes=[]; methods=[]; trees=[]
     by_class=defaultdict(list); by_name=defaultdict(list)
     for path,source in files.items():

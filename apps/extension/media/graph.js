@@ -28,7 +28,7 @@ const NS = 'http://www.w3.org/2000/svg';
 let renderVersion=0, systemLayout, symbolLayout, symbolViewKey;
 let focus, fileId, parentSymbol, mainNodeId, mainTrail=[], history=[];
 let orders={}, labelSelection=new Map(), labelPopup, sortTarget;
-let graph, selected, component, moduleId, affected = new Set(), contextText = '', box = [0,0,1100,600], positions = new Map();
+let graph, selected, component, moduleId, affected = new Set(), contextText = '', contextJson = '', box = [0,0,1100,600], positions = new Map();
 function el(tag, attrs={}, value) { const n=document.createElementNS(NS,tag); for(const [k,v] of Object.entries(attrs)) n.setAttribute(k,String(v)); if(value!==undefined)n.textContent=value; return n; }
 function itemsForReview(){
   if(!proposalId)return reviewItems(changes);
@@ -261,11 +261,12 @@ window.addEventListener('message',({data:m})=>{
  chatEvent(m);
  createEvent(m);
  if(m.type==='proposalState'){proposalBusy=m.busy;updateSelection();if(m.error)$('proposalError').textContent=m.error;}
- if(m.type==='graph'){proposalId=m.proposalId;proposedFiles=m.files||[];selectedFiles.clear();proposalBusy=false;drawFileDiff(document,undefined);latestGraph=m.graph;baselineGraph=m.baseline;changes=m.changes||{};changeIndex=-1;$('reviewLocation').textContent='';drawReview();orders={};labelSelection.clear();labelPopup=undefined;$('sortMenu').hidden=true;history=[];mainNodeId=undefined;mainTrail=[];focus=undefined;selected=undefined;systemLayout=undefined;symbolLayout=undefined;symbolViewKey=undefined;svg.dataset.systemFitted='';graph=m.graph;drawSearchResults();component=undefined;moduleId=undefined;fileId=undefined;parentSymbol=undefined;$('layer').value=graph.layers?.repository?'repository':'architecture';affected.clear();contextText='';$('context').textContent='';$('status').textContent=`${graph.layers?.architecture.nodes.length||0} system components · ${graph.nodes.length} source nodes · snapshot ${graph.revision}${m.stale?' · stale':''}`;$('warnings').textContent=[...(graph.inventory?.limitations||[]),...graph.warnings].join('\n')||'No diagnostics.';render();fit();if(proposalId && proposedFiles.length)visitChange(0);}
+ if(m.type==='graph'){$('runTests').disabled=false;proposalId=m.proposalId;proposedFiles=m.files||[];selectedFiles.clear();proposalBusy=false;drawFileDiff(document,undefined);latestGraph=m.graph;baselineGraph=m.baseline;changes=m.changes||{};changeIndex=-1;$('reviewLocation').textContent='';drawReview();orders={};labelSelection.clear();labelPopup=undefined;$('sortMenu').hidden=true;history=[];mainNodeId=undefined;mainTrail=[];focus=undefined;selected=undefined;systemLayout=undefined;symbolLayout=undefined;symbolViewKey=undefined;svg.dataset.systemFitted='';graph=m.graph;drawSearchResults();component=undefined;moduleId=undefined;fileId=undefined;parentSymbol=undefined;$('layer').value=graph.layers?.repository?'repository':'architecture';affected.clear();contextText='';contextJson='';$('copyJson').disabled=true;$('context').textContent='';$('status').textContent=`${graph.layers?.architecture.nodes.length||0} system components · ${graph.nodes.length} source nodes · snapshot ${graph.revision}${m.stale?' · stale':''}`;$('warnings').textContent=[...(graph.inventory?.limitations||[]),...graph.warnings].join('\n')||'No diagnostics.';render();fit();if(proposalId && proposedFiles.length)visitChange(0);}
  if(m.type==='select'){selected=m.id;render();}
  if(m.type==='status'||m.type==='error')$('status').textContent=m.message;
- if(m.type==='impact'){affected=new Set(m.result.affected);$('details').textContent=`${m.result.direct.length} direct · ${m.result.affected.length} affected. ${m.result.limitations}`;$('context').textContent=Object.entries(m.result.reasons).map(([id,why])=>`${graph.nodes.find(n=>n.id===id)?.name}: ${why}`).join('\n');render();}
- if(m.type==='context'){contextText=m.result.text;affected=new Set(m.result.selected);$('details').textContent=`${m.result.tokens.toLocaleString()} / ${m.result.budget.toLocaleString()} tokens · ${m.result.selected.length} symbols · indexed source ${m.result.repository_tokens.toLocaleString()} tokens (cl100k_base)`;$('context').textContent=contextText;render();}
+ if(m.type==='impact'){affected=new Set(m.result.affected);const tests=m.result.tests||{tests:[]};$('details').textContent=`${m.result.direct.length} direct · ${m.result.affected.length} affected · ${tests.tests.length?tests.tests.length+' associated test(s)':'no identified tests'}. ${m.result.limitations}`;$('context').textContent=Object.entries(m.result.reasons).map(([id,why])=>`${graph.nodes.find(n=>n.id===id)?.name}: ${why}`).join('\n')+(tests.tests.length?'\n\nAssociated tests (heuristic):\n'+tests.tests.map(t=>`${t.path}${t.name&&t.name!==t.path?' · '+t.name:''} — via ${[...new Set(t.justification.map(j=>j.symbol_name+' ('+j.via+')'))].join(', ')}`).join('\n'):'');render();}
+ if(m.type==='testResults'){drawTestResults(m.result);}
+ if(m.type==='context'){const r=m.result;contextText=r.text;contextJson=JSON.stringify(r,null,2);affected=new Set([...r.selected,...(r.supporting||[])]);const tiers=r.tiers||{included:[],supporting:[],excluded:[]};const name=t=>`${t.name} (${t.path.split('/').pop()}, ${t.tokens} tok)`;$('details').textContent=`${r.tokens.toLocaleString()} / ${r.budget.toLocaleString()} tokens · ${tiers.included.length} included · ${tiers.supporting.length} supporting (signature) · ${tiers.excluded.length} excluded · indexed source ${r.repository_tokens.toLocaleString()} tokens (cl100k_base)${r.shortfall?.length?` · ${r.shortfall.length} edit target(s) did not fit`:''}`;$('context').textContent=['Included (full source):',...tiers.included.map(t=>'  '+name(t)),'Supporting (signature only):',...tiers.supporting.map(t=>'  '+name(t)+(r.omissions?.[t.id]?' — '+r.omissions[t.id]:'')),'Excluded:',...tiers.excluded.map(t=>'  '+name(t)+(t.reason?' — '+t.reason:'')),'',contextText].join('\n');$('copyJson').disabled=false;render();}
 });
 $('sortAlpha').onclick=()=>applyOrder('alphabetical');
 $('sortSource').onclick=()=>applyOrder('source');
@@ -276,8 +277,24 @@ $('closeMainNode').onclick=()=>{labelPopup=undefined;mainNodeId=undefined;mainTr
 $('generateAI').onclick=()=>vscode.postMessage({type:'analyze'});
 $('analyze').onclick=()=>vscode.postMessage({type:'generateAI'});
 $('impact').onclick=()=>vscode.postMessage({type:'impact',query:$('query').value});
+$('runTests').onclick=()=>vscode.postMessage({type:'runTests',query:$('query').value});
+function drawTestResults(result){
+ const box=$('testResults');box.hidden=false;
+ const totals=result.totals||{};
+ $('testHeading').textContent=`Tests ${result.status}${totals.passed!==undefined?` · ${totals.passed} passed · ${totals.failed} failed · ${totals.skipped} skipped`:''} · ${(result.duration_ms/1000).toFixed(1)}s`;
+ $('testNote').textContent=(result.proposalId?'Ran against the pending proposal in a fresh copy. ':'')+(result.note||'')+(result.isolation?' '+result.isolation+'.':'');
+ const list=$('testRuns');list.textContent='';
+ for(const run of result.runs||[]){
+  const item=document.createElement('li');item.className='test-run test-'+run.status;
+  const head=document.createElement('strong');head.textContent=`${run.status.toUpperCase()} · ${[run.tool,...run.args].join(' ')}${run.exit_code===null?'':' · exit '+run.exit_code}`;
+  const out=document.createElement('pre');out.textContent=((run.stdout||'')+(run.stderr?'\n'+run.stderr:'')).trim().slice(-4000)||'(no output)';
+  item.append(head,out);list.append(item);
+ }
+ if(!(result.runs||[]).length){const item=document.createElement('li');item.textContent='Nothing executed.';list.append(item);}
+}
 $('compile').onclick=()=>vscode.postMessage({type:'context',query:$('query').value,budget:Number($('budget').value)});
 $('copy').onclick=()=>{if(contextText)vscode.postMessage({type:'copy',text:contextText});};
+$('copyJson').onclick=()=>{if(contextJson)vscode.postMessage({type:'copy',text:contextJson});};
 $('budget').oninput=()=>{$('budgetLabel').textContent=Number($('budget').value).toLocaleString()+' tokens';};
 $('traceBack').onclick=()=>{labelPopup=undefined;const previous=history.pop();if(!previous)return;component=previous.component;moduleId=previous.moduleId;fileId=previous.fileId;parentSymbol=previous.parentSymbol;focus=previous.focus;selected=previous.selected;mainNodeId=previous.mainNodeId;mainTrail=previous.mainTrail||[];$('layer').value=previous.level;render();fit();};
 $('search').oninput=drawSearchResults;$('layer').onchange=()=>{const level=$('layer').value;if(level==='trace')focus=selected;if(['repository','architecture'].includes(level)){component=undefined;moduleId=undefined;fileId=undefined;parentSymbol=undefined;}else if(level==='modules'){moduleId=undefined;fileId=undefined;parentSymbol=undefined;}else if(level==='files'){fileId=undefined;parentSymbol=undefined;}render();fit();};$('back').onclick=()=>{graph=latestGraph;labelPopup=undefined;mainNodeId=undefined;mainTrail=[];history=[];component=undefined;moduleId=undefined;fileId=undefined;parentSymbol=undefined;$('layer').value=graph.layers?.repository?'repository':'architecture';render();fit();};$('reset').onclick=fit;

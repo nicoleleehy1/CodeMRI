@@ -1,0 +1,17 @@
+{
+  "description": "Labeled task -> relevant production symbols (path::name) on the fixtures. Used by benchmarks/retrieval_eval.py to score impact() seeds and compile_context() selection. Test-file nodes are not scored. Labels are hand-written judgments about which symbols an engineer must read or edit for the task, not derived from the tool's output.",
+  "tasks": [
+    {"id": "shop-coupon-floor", "repo": "examples/shop", "task": "applyCoupon must never return a negative total",
+     "relevant": ["src/coupons.ts::applyCoupon", "src/pricing.ts::calculatePrice"]},
+    {"id": "shop-checkout-total", "repo": "examples/shop", "task": "change checkout so the order total includes tax",
+     "relevant": ["src/checkout.ts::checkout", "src/pricing.ts::calculatePrice", "src/orders.ts::saveOrder"]},
+    {"id": "shop-analytics", "repo": "examples/shop", "task": "track page views with a session id",
+     "relevant": ["src/analytics.ts::trackPage"]},
+    {"id": "system-design-coupon", "repo": "examples/system-design", "task": "apply coupon codes during checkout",
+     "relevant": ["services/checkout.ts::applyCoupon", "services/checkout.ts::checkout"]},
+    {"id": "system-design-order-api", "repo": "examples/system-design", "task": "createOrder endpoint should persist orders",
+     "relevant": ["api/server.ts::createOrder", "database/store.ts::saveOrder", "services/checkout.ts::checkout"]},
+    {"id": "memmunk-compaction", "repo": "examples/MemMunkDB", "optional": true, "task": "compaction of sstables should keep tombstones until the last tier",
+     "relevant": ["src/main/java/com/lsmtree/compaction/Compactor.java::compact", "src/main/java/com/lsmtree/compaction/Compactor.java::mergeTier", "src/main/java/com/lsmtree/compaction/Compactor.java::writeCompacted"]}
+  ]
+}

@@ -1,5 +1,7 @@
 import hashlib
+import json
 import os
+import time
 import sqlite3
 from pathlib import Path
 from .models import Graph
@@ -13,6 +15,7 @@ class Store:
         self.directory.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS repositories (id TEXT PRIMARY KEY, current TEXT NOT NULL, baseline TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS test_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, revision TEXT NOT NULL, created REAL NOT NULL, result TEXT NOT NULL)')
 
     def connect(self):
         return sqlite3.connect(self.directory / 'graphs.sqlite3', timeout=30)
@@ -42,6 +45,18 @@ class Store:
     def review(self, key):
         current, baseline = self.load(key), self.load(key, baseline=True)
         return {'changes': changes(baseline, current), 'baseline': baseline}
+
+    def save_run(self, key, revision, result: dict) -> int:
+        """Persist a structured test-run result (P3.4) against the graph revision it was run for."""
+        with self.connect() as db:
+            cursor = db.execute('INSERT INTO test_runs (repo, revision, created, result) VALUES (?, ?, ?, ?)',
+                                (key, revision, time.time(), json.dumps(result)))
+            return cursor.lastrowid
+
+    def runs(self, key, limit=20) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute('SELECT id, revision, created, result FROM test_runs WHERE repo=? ORDER BY id DESC LIMIT ?', (key, limit)).fetchall()
+        return [{'id': i, 'revision': rev, 'created': created, **json.loads(result)} for i, rev, created, result in rows]
 
     def accept(self, key, revision):
         with self.connect() as db:

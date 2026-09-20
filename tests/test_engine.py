@@ -9,11 +9,13 @@ DEMO = Path(__file__).resolve().parents[1] / 'examples/shop'
 def test_demo_graph_and_reverse_impact():
     graph = analyze(DEMO)
     by_id = {n.id:n for n in graph.nodes}
-    calls = {(by_id[e.source].name, by_id[e.target].name) for e in graph.edges if e.kind=='calls'}
+    production = lambda e: not by_id[e.source].path.startswith('tests/')
+    calls = {(by_id[e.source].name, by_id[e.target].name) for e in graph.edges if e.kind=='calls' and production(e)}
     assert calls == {('checkout','calculatePrice'), ('checkout','saveOrder'), ('calculatePrice','applyCoupon')}
-    assert len([e for e in graph.edges if e.kind=='imports']) == 3
+    assert len([e for e in graph.edges if e.kind=='imports' and production(e)]) == 3
     result = impact(graph, 'change applyCoupon')
-    assert {by_id[s].name for s in result['affected']} == {'applyCoupon','calculatePrice','checkout'}
+    assert {by_id[s].name for s in result['affected'] if not by_id[s].path.startswith('tests/')} == {'applyCoupon','calculatePrice','checkout'}
+    assert result['tests']['files'] == ['tests/checkout.test.ts', 'tests/pricing.test.ts']
     assert any('reduce' in w for w in graph.warnings)
 
 def test_budget_and_store(tmp_path):

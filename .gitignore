@@ -28,3 +28,8 @@ examples/MemMunkDB/
 
 # Tool residue that is not part of the project
 .github/modernize/
+
+# Benchmark artifacts are recorded deliberately; nothing here is a result until labeled.
+benchmarks/results.jsonl
+benchmarks/runs/*
+!benchmarks/runs/.gitkeep

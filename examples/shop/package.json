@@ -1,0 +1,11 @@
+{
+  "name": "codemri-example-shop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "4.20.5"
+  }
+}
