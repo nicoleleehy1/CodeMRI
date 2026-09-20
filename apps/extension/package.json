@@ -1,1 +1,61 @@
-{"name":"codemri","displayName":"CodeMRI","description":"Compile codebases into context","version":"0.1.0","publisher":"codemri","engines":{"vscode":"^1.90.0"},"main":"./dist/extension.js","categories":["Visualization"],"activationEvents":[],"capabilities":{"untrustedWorkspaces":{"supported":false}},"contributes":{"commands":[{"command":"codemri.analyze","title":"CodeMRI: Analyze Repository"},{"command":"codemri.open","title":"CodeMRI: Open Graph"}],"configuration":{"title":"CodeMRI","properties":{"codemri.apiUrl":{"type":"string","default":"http://127.0.0.1:8000","description":"Local CodeMRI API URL"}}}},"scripts":{"build":"node build.mjs","check":"tsc --noEmit"},"devDependencies":{"@types/node":"^20.0.0","@types/vscode":"^1.90.0","esbuild":"^0.25.0","typescript":"^5.7.0"},"dependencies":{"elkjs":"^0.12.0"}}
+{
+  "name": "codemri",
+  "displayName": "CodeMRI",
+  "description": "Compile codebases into context",
+  "version": "0.1.0",
+  "publisher": "codemri",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./dist/extension.js",
+  "categories": [
+    "Visualization"
+  ],
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "codemri.analyze",
+        "title": "CodeMRI: Analyze Repository"
+      },
+      {
+        "command": "codemri.open",
+        "title": "CodeMRI: Open Graph"
+      }
+    ],
+    "configuration": {
+      "title": "CodeMRI",
+      "properties": {
+        "codemri.apiUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Local CodeMRI API URL"
+        },
+        "codemri.codexPath": {
+          "type": "string",
+          "default": "codex",
+          "scope": "machine",
+          "description": "Path to the installed Codex CLI. Run codex login before using the coding chat."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "elkjs": "^0.12.0"
+  }
+}

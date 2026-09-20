@@ -11,7 +11,7 @@ This HackMIT prototype starts with a repository-wide system architecture view, t
 
 Coding agents repeatedly reconstruct repository structure before making changes. CodeMRI persists that structural knowledge and makes it useful in two places: an evidence-backed architecture view beside the source, and a focused context pack for an agent.
 
-The current prototype connects **repository → architecture → source navigation → heuristic impact → token-budgeted context**. The longer-term goal extends that loop through agent patches, tests, and architecture comparison. The sections through **Current limitations and next steps** document the supplied implementation; **Product roadmap and design** describes future work, not shipped capabilities.
+The current prototype connects **repository → architecture → source navigation → heuristic impact → token-budgeted context**. The extension also supports isolated Codex proposals, file approval, baseline graph comparison, and architecture drafts. The remaining loop work connects compiled context to agent execution and structured test verification. The sections through **Current limitations and next steps** document the supplied implementation; **Product roadmap and design** describes remaining work and identifies existing foundations. [ROADMAP.md](ROADMAP.md) is the actionable task list, reconciled against the local source on 2026-09-20; read its handoff instructions before implementation.
 
 > One persistent code world model. Two consumers: developers and coding agents.
 
@@ -85,11 +85,11 @@ examples/shop       Original small symbol-analysis fixture
 
 `Graph` contains a schema version, canonical root, content revision, nodes, typed edges, and diagnostics. Nodes retain repository-relative paths, one-based source lines, UTF-16 columns, and source snippets. Calls point caller → callee; imports point importing module → imported module; containment points module → symbol.
 
-Snapshots are atomically written to `.codemri/<repository-id>.json`, outside the analyzed project by default when launched here. API and MCP must use the same working directory or the same absolute `CODEMRI_CACHE`. Snapshots include source code; keep them local and out of Git. Reanalysis replaces the snapshot. Editing source marks the panel stale; explicitly reanalyze to refresh it. Symbol IDs include byte offsets and may change after edits.
+Snapshots are stored transactionally in `.codemri/graphs.sqlite3`, outside the analyzed project by default when launched here. Existing JSON caches are migrated on the next scan. API and MCP must use the same working directory or the same absolute `CODEMRI_CACHE`. Snapshots include source code; keep them local and out of Git. Reanalysis updates the current snapshot and preserves the last-reviewed baseline. Editing source marks the panel stale; explicitly reanalyze to refresh it. Coding-chat runs analyze proposed edits in a separate copy; the working graph refreshes after explicit approval or discard. Symbol comparison matches declarations across offset changes.
 
 ## GitDiagram-style architecture
 
-The highest level is now a **repository-specific system map**, with domain subsystem groups, actors, code components, storage cylinders, human-readable connection labels, and source evidence. Generic Frontend/API/Services buckets are no longer the final architecture diagram. ELK computes nested group layout and orthogonal connections; SVG renders locally in the VS Code webview. Click a component for its implementation module, then symbols; click a connection for source citations.
+The highest level is now a **repository-specific system map**, with domain subsystem groups, actors, code components, storage cylinders, human-readable connection labels, and source evidence. Generic Frontend/API/Services buckets are no longer the final architecture diagram. ELK computes nested group layout and orthogonal connections; SVG renders locally in the VS Code webview. Double-click a component for its implementation module, then symbols; click a connection for source citations.
 
 Two modes are deliberately distinct:
 
@@ -108,7 +108,7 @@ Create a local `.env` using `.env.example`; set `OPENAI_API_KEY` and `CODEMRI_AR
 
 Click **Analyze repository**, then **Generate AI architecture**. The button sends sampled repository content to OpenAI and uses your API billing. Ordinary local analysis never makes an AI call. The input contains the inventoried file tree and up to 140,000 characters of excerpts (16,000 per file); omitted/truncated coverage is recorded. Errors preserve the current graph. Reanalysis refreshes the local graph; regenerate AI architecture after changes. Requests set `store: false`.
 
-No live paid AI request was made during implementation; the provider adapter is tested with a mocked response. You must configure your key/model for generation. [Official Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
+The roadmap records a live MemMunkDB generation on 2026-09-19. Quote-verified citation improvements have automated tests, but their follow-up live quality measurement remains pending. This documentation audit did not repeat paid requests. You must configure your key/model for generation. [Official Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 ### MemMunkDB demo
 
@@ -118,7 +118,19 @@ The demo launch configuration targets `examples/MemMunkDB`, a local checkout ign
 git clone https://github.com/nicoleleehy1/MemMunkDB.git examples/MemMunkDB
 ```
 
-The local map discovers RestServer, the HTML dashboard, LSMStore, Compactor, MemTable, WriteAheadLog, SSTable, SSTableIndex, the CLI demo, HTTP caller, and filesystem storage. It uses source patterns rather than a hardcoded MemMunkDB graph. Java modules display filenames and drill into AST-extracted methods/constructors. Clicking a function opens its source and shows a one-hop caller/callee graph; click another function to go deeper and use Back to retrace your steps. The other examples remain available by opening their folders manually.
+The local map discovers RestServer, the HTML dashboard, LSMStore, Compactor, MemTable, WriteAheadLog, SSTable, SSTableIndex, the CLI demo, HTTP caller, and filesystem storage. It uses source patterns rather than a hardcoded MemMunkDB graph. Java modules display filenames and drill into AST-extracted methods/constructors. Double-clicking a function opens its source and shows a one-hop caller/callee graph; double-click another function to go deeper and use Back to retrace your steps. The other examples remain available by opening their folders manually.
+
+**Analyze calls** (the former Analyze repository action) opens a source-derived repository graph. **Analyze hierarchy** runs the former Generate AI architecture action, scanning first if the saved snapshot is missing or stale. It sends sampled source to the configured AI backend. Navigate **repository → architecture component → module/package → file → declaration**, then double-click a class to see its methods or a function to explore its calls and nested declarations. Back restores the previous scope. The API also exposes `repository`, `packages`, `files`, and `hierarchy` projections; existing `architecture` and `modules` projections remain available.
+
+**Find a symbol** lists matching indexed definitions and recorded call sites across the codebase, including file and line. Selecting a result opens the containing graph scope, selects its node, and reveals the source location. Navigation controls sit below the search and semantic-layer fields: Back on the left, Full Repository and Fit Graph on the right.
+
+Class, function, and interface cards use dark navy containers, teal section headings, and wrapped chips. Class/interface cards show constructors, attributes, methods, and inheritance where present. Functions show parameters, local variables, nested functions, calls, return declarations/expressions, attributes, strings, and types. Type aliases, enums, constants, and globals are also inventoried for TS/JS. Other components retain the architecture shapes. ELK arranges dependency-driven columns and right-angle arrows. Long individual values are condensed; hover for their full text.
+
+The graph sits on a dotted canvas with a muted gray frame. Clicking any node opens a pinned **Main node** panel on the left inside the same graph frame. A single click selects without changing graph depth; double-click (or Enter) drills down, while Space selects. The graph on the right remains available for drilldown and call exploration. A classification box identifies Architecture → Module/package → File/Class/Function/Interface, or the API endpoint, database entity, queue, or external-service category. Below it, **Function path** records the actual sequence of node clicks (including function-to-function jumps), with source links beside incoming calls or architecture relationships. Back restores the previous main node and path; closing the panel restores the full-width graph. Editor source navigation does not replace the pinned main node. Caller links open exact UTF-16 source columns in VS Code. Counts include each resolved source occurrence (including repeated calls by one caller), not runtime execution frequency; unresolved/dynamic calls are excluded. Reanalyze older snapshots to populate call locations.
+
+Each card section has an SF Symbols order icon to switch between alphabetical and source order (first occurrence for calls, declaration order for other labels). Calls have direct source-occurrence count badges and a Select all/Clear calls control that highlights their labels, resolved callees, and connections. Clicking a call label opens a top-right popup with counts in the selected main function and across its reachable resolved subgraphs, plus exact source links. Recursive and converging paths count each physical source occurrence once, not once per traversal. Unresolved library calls are counted by exact label; their unknown subgraphs cannot be traversed. These are static source counts, not runtime execution counts. Older snapshots show unknown badges until reanalysis.
+
+The local repository graph also includes detected literal Java HTTP contexts, common JS/TS route declarations, Python route decorators, SQL/Prisma entity declarations, and explicitly declared queue services. Discovery is partial, static, and source-backed; dynamic routes, undeclared infrastructure, and full runtime/type resolution are not inferred. Function call chips include source expressions, while graph call edges include resolved targets only. Restart the backend, rebuild/reload the extension, and **Analyze repository** again to populate the new hierarchy and card details in existing snapshots.
 
 Architecture graph fields include `groups`, `mode`, `explanation`, node `shape`/`group`, and edge `label`/`evidence`. The same graph is returned through MCP `get_architecture`. Source-specific modules are linked through `component_id`/`module_id`; AI responsibilities may share an implementation file.
 
@@ -130,13 +142,19 @@ The implementation baseline documented here includes:
 
 - Repository-wide inventory and evidence-backed system maps with nested ELK layout and local SVG rendering.
 - Java classes, methods, constructors, and bounded receiver-type call tracing; MemMunkDB architecture drilldown and source evidence.
-- Optional AI-generated architecture with validated references and explicitly inferred relationships; provider behavior tested with mocks, not a live paid request.
+- Optional AI-generated architecture with validated references and explicitly inferred relationships; automated provider tests plus a historical live MemMunkDB run recorded in the roadmap; follow-up citation quality measurement remains pending.
 - Functions, arrow-function variables, classes, methods, interfaces, and type aliases from TS/TSX/JS/JSX.
 - Relative module import edges and direct identifier calls, including named import aliases.
 - Interactive graph with source navigation, editor selection highlighting, pan/zoom, symbol search, and optional module nodes.
 - Static change-impact prototype: lexical symbol/path seeds plus up to three reverse call hops, with reasons.
 - Context compiler: relevant symbols, callers and direct dependencies packed into a real `cl100k_base` token budget; returns selected/excluded IDs and full-source token counts.
-- Persistent snapshots consumed by the HTTP API and MCP tools.
+- SQLite working snapshots and reviewed baselines consumed by the shared engine; HTTP API and MCP read the same store.
+- Baseline symbol/edge comparison, graph change highlighting, and review controls.
+- Isolated Codex coding proposals, whole-file approval/discard, and pending-proposal restoration.
+- Create mode: editable architecture drafts, local validation, read-only Codex assessment, and reviewed implementation proposals.
+- Context-budget slider, copyable context, and selected-symbol highlighting.
+
+These capabilities are present in source and have relevant automated tests; this documentation reconciliation is not a fresh test or manual F5 run.
 
 ## API
 
@@ -145,10 +163,15 @@ Open `http://127.0.0.1:8000/docs` for the generated request/response playground.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Service availability |
+| `GET /ai/status` | Backend AI configuration status; never returns the key |
 | `POST /analyze` | `{ "root": "/absolute/repository" }` → repository ID and graph |
 | `GET /graphs/{repo_id}` | Load a persisted graph |
 | `POST /graphs/{repo_id}/impact` | `{ "query": "change applyCoupon", "seed_ids": [] }` |
 | `POST /graphs/{repo_id}/context` | Same request plus `"budget": 4000` |
+| `GET /graphs/{repo_id}/freshness` | Compare indexed source revision without replacing saved graph |
+| `POST /graphs/{repo_id}/architecture-ai` | Explicit AI architecture generation |
+| `POST /graphs/{repo_id}/review` | `{ "revision": "..." }` → advance reviewed baseline |
+| `POST /preview` | `{ "root": "...", "files": [{ "path": "...", "before": "...", "after": "..." }] }` → isolated proposal graph preview; null before/after represents addition/deletion |
 
 `packages/engine/codemri/models.py` is the Python graph contract. The extension's matching interfaces are in `apps/extension/src/extension.ts`. Context and impact functions are isolated in `context.py` so semantic ranking can replace lexical matching without changing consumers.
 
@@ -210,7 +233,7 @@ Stretch roadmap, in order:
 
 1. Full Java type/overload resolution, TypeScript language-service resolution, incremental indexing and stable symbol identities.
 2. Semantic summaries/embeddings and task-aware ranking with retrieval benchmarks.
-3. Architecture diff between retained snapshots (added/removed/changed symbols and edges).
+3. Arbitrary historical snapshot comparison and PR mode; working-versus-reviewed symbol/edge comparison already exists.
 4. Test discovery, impacted-test selection, and an explicit agent patch → test → graph-refresh loop.
 5. Git history and provenance, execution traces, route/data relationships.
 
@@ -231,7 +254,7 @@ root coordinates before drawing, including edges kept in the root edge array.
 
 ## Product roadmap and design
 
-**Everything in this section is a proposed extension unless listed under What works now.** Preserve the existing Python engine, API/MCP contracts, npm workspace, and SVG/ELK webview. React Flow, a separate TypeScript MCP service, pnpm, and the earlier `apps/backend` layout were planning alternatives; they are not prerequisites or migration requirements.
+**Use ROADMAP.md task statuses for implementation. Existing foundations are called out below; the remaining designs are proposals, not instructions to rebuild delivered features.** Preserve the existing Python engine, API/MCP contracts, npm workspace, and SVG/ELK webview. React Flow, a separate TypeScript MCP service, pnpm, and the earlier `apps/backend` layout were planning alternatives; they are not prerequisites or migration requirements.
 
 ### Recommended stack and repository layout
 
@@ -241,7 +264,7 @@ root coordinates before drawing, including edges kept in the root edge array.
 | Layout | ELK nested layout and orthogonal edges | Improve focused views and large-graph performance |
 | Analysis | Python, Tree-sitter Java and TS/JS, repository inventory | Improve resolution before adding broad language claims |
 | API | FastAPI in `services/api` | Preserve validated repository boundaries |
-| Persistence | Atomic JSON snapshots | Add retained versions and incremental updates |
+| Persistence | SQLite current graph + reviewed baseline, legacy JSON migration | Add retained historical versions and incremental updates |
 | Context | Lexical retrieval, greedy symbol packing, tiktoken | Measure retrieval quality before semantic ranking |
 | Agent tools | Python MCP server over stdio | Keep API and MCP on the same engine/cache |
 | AI architecture | Optional OpenAI structured output | Preserve inferred labels, source evidence, and disclosure |
@@ -284,9 +307,9 @@ Keep the architecture-first experience: system → component → module → symb
 | Tests | Which tests are associated with this behavior? |
 | History | How did this structure change over time? |
 
-Proposed polish includes pinned graph roots, symbol cards, context-menu actions, CodeLens caller/test counts, architecture breadcrumbs, keyboard navigation, and labels alongside color. Debounce selection events and prevent graph/editor feedback loops. Keep stale-state warnings until reanalysis finishes; automatic incremental refresh is not implemented yet.
+Pinned main-node panels, symbol cards, navigation paths, keyboard selection/drilldown, and call-count badges already exist. Remaining polish includes context-menu actions and editor CodeLens caller/test counts. Debounce selection events and prevent graph/editor feedback loops. Keep stale-state warnings until reanalysis finishes; automatic incremental refresh is not implemented yet.
 
-Future commands can cover Explain Current Symbol, Trace Current Symbol, Find Tests, Compile Agent Context, Ask About Architecture, View Git History, and Compare Architecture. These are additions to the existing Analyze Repository workflow, not a list of commands currently registered.
+Future command-palette shortcuts can cover Explain Current Symbol, Trace Current Symbol, Find Tests, Compile Agent Context, Ask About Architecture, View Git History, and Compare Architecture. Trace navigation, context compilation, and baseline comparison already exist inside the webview. These are additions to the existing Analyze Repository workflow, not a list of commands currently registered.
 
 ### Natural-language graph queries
 
@@ -368,6 +391,8 @@ Include task and constraints, repository/snapshot identity, selected symbols, ex
 
 #### Heatmap and budget slider
 
+The budget slider, copy action, and selected-symbol highlighting already exist. Remaining work is the included/supporting/excluded presentation, JSON export, and explicit context-pack handoff to the agent. The mockup below shows the target state.
+
 ```text
 Context budget     2K ──────●────────── 32K
 
@@ -393,14 +418,14 @@ Task → impact → compile_agent_context → compatible agent
   → review patch → run tests → explicitly reanalyze → graph diff
 ```
 
-Copying a context pack is available now; autonomous patch application, test execution, and graph-diff verification are future integration work. Verify each target client's configuration rather than claiming all clients support the generic example unchanged. Codex, Devin, and Warp remain potential integration targets.
+Copying a context pack and local Codex coding proposals are implemented, including manual whole-file application, proposal graph previews, and reviewed-baseline comparisons. Coding chat currently passes task/chat text, not the compiled context pack. Remaining work connects impact/context to execution, adds a structured isolated test runner and result capture, and records the complete loop. The CLI can execute commands, but that alone is not test discovery or structured verification. Devin and Warp integrations remain unverified.
 
 If the client provides activity events, show which symbols the agent reads/edits and which tests run. “Why this context?” should explain retrieval evidence, not expose or invent hidden model reasoning. Keep code-reading tools separate from authorized execution and patch actions.
 
 
 ### Architecture diff and PR mode
 
-Compare graph snapshots before and after a change:
+Working-versus-reviewed symbol/edge comparison and proposal overlays already exist. Extend them to arbitrary retained snapshots, architecture-layer semantic changes, and PR merge-base comparison:
 
 ```text
 Before: CheckoutService → PaymentService
@@ -446,7 +471,7 @@ An optional dashboard summarizes symbol/module counts, cycles, highly coupled mo
 
 ### Caching and incremental indexing
 
-Current persistence stores the latest graph and reanalysis replaces it. The following cache invalidation and incremental-update strategy is future work; the current UI marks edits stale and requires explicit reanalysis.
+Current persistence stores the latest graph and a last-reviewed baseline in SQLite. The following cache invalidation and incremental-update strategy is future work; the current UI marks edits stale and requires explicit reanalysis.
 
 - Hash file contents; skip unchanged files.
 - Re-extract changed files and remove deleted symbols/edges.
@@ -473,12 +498,12 @@ P0 means stabilize the existing prototype, not rebuild it using the original sca
 | P1 | Stable identities and better Java/TS resolution | Accuracy fixtures for overloads, imports, shadowing, and edits |
 | P1 | Incremental indexing and bounded rendering | Correct invalidation, freshness, and responsive larger graphs |
 | P1 | Retrieval benchmark and context UI | Measured quality, budget slider, explainable selection |
-| P1 | Retained snapshots and architecture diff | Correct added/removed/changed relationships |
-| P1 | Tests and one explicit agent loop | Real patch, test result, and refreshed graph |
+| P1 | Historical snapshots and richer architecture diff | Extend existing baseline diff to history, rename/move, cycles, and architecture-layer changes |
+| P1 | Context handoff, tests, and one recorded agent loop | Extend existing Codex proposals with compiled context and structured test results |
 | P2 | History, PR mode, health, data flow | Evidence-backed views on real repositories |
 | P2 | Runtime observation, security, collaboration | Separate observed evidence and appropriate isolation |
 
-Work in phases: **reproduce → harden analysis → measure retrieval → integrate one agent → add historical/advanced views**. Preserve the working demo before pursuing optional features. AI architecture generation is optional; a mock-tested adapter should not be presented as a verified live integration until exercised.
+Work in phases: **reproduce → harden analysis → measure retrieval → integrate one agent → add historical/advanced views**. Preserve the working demo before pursuing optional features. AI architecture generation is optional; distinguish the historical live run from follow-up improvements whose live quality remains unmeasured.
 
 ## 90-second demo
 
@@ -496,7 +521,7 @@ The current demo should showcase shipped behavior, with a brief transition from 
 
 Optional AI architecture generation can be shown in a separate segment after configuring and testing it. Do not make network latency or billing a dependency of the main demo.
 
-Once the agent/test loop exists, replace part of the navigation segment with a real patch, test run, and architecture diff. Label recorded or precomputed runs. Context-size reduction alone is not evidence of end-to-end agent savings.
+Once the complete context/agent/test loop is verified, replace part of the navigation segment with a real patch, structured test result, and graph diff. Proposal editing and baseline diff already exist. Label recorded or precomputed runs. Context-size reduction alone is not evidence of end-to-end agent savings.
 
 
 ## Benchmark plan
@@ -593,4 +618,25 @@ Future work includes:
 - Understand the architecture. Explain the impact. Compile the context.
 - A semantic map beside your code—and a context engine behind your agent.
 
-The current HackMIT deliverable is **real code → evidence-backed architecture → source navigation → heuristic impact → token-budgeted context**. The next milestone closes the loop with **agent patch → tests → refreshed graph → architecture diff**.
+The current HackMIT deliverable is **real code → evidence-backed architecture → source navigation → heuristic impact → token-budgeted context**. The next milestone connects existing proposals and graph review into **compiled context → agent patch → structured tests → refreshed graph → verified diff**.
+
+
+### Coding chat and graph review
+
+Scroll to **Build with CodeMRI**, enter a prompt, and choose **Send to Codex**. Install the Codex CLI and run `codex login` first; set the machine setting `codemri.codexPath` if the executable is not on VS Code's PATH. Save dirty editor buffers before sending. Each turn runs in a separate temporary copy with recent chat context, the workspace-write sandbox, and no interactive elevation. The copy excludes Git metadata, dependency directories, and symlinks. Agent edits do not touch your working files. Stop cancels the agent; any partial edits still require approval.
+
+After each run, **Changes have been made!** lists proposed file changes above the graph. Hover a row number (or focus it with the keyboard) to reveal its checkbox; selected checkboxes stay visible. Click a row to inspect red `−` removals, green `+` additions, and old/new line numbers. **Approve selected** applies entire selected files; **Delete selected** discards those proposals. Changes within a file are reviewed together. Newer disk edits, dirty editor buffers, and symlink targets block approval. Resolve pending proposals before the next prompt. A local manifest lets the extension restore pending proposals after reload while the temporary directory exists. Binary changes are not supported.
+
+The preview graph shows proposed changes without replacing the stored working graph. Approving or discarding all proposals returns to the working graph; unsupported source files still have a text diff even if they have no graph nodes. Click a change or use Previous/Next to navigate. Yellow outlines and bold yellow labels indicate changed areas, and changed connections are thick yellow. Removed items open the previous snapshot; live-source navigation is disabled in that view. Full Repository returns to the current snapshot. **Mark reviewed** advances the baseline without committing or discarding code. External edits are included on the next manual scan; unsupported/unindexed files are outside this review's coverage.
+
+SQLite is the recommended persistence for this local extension: it needs no database server and atomically updates graph snapshots and review baselines. API and MCP must share an absolute `CODEMRI_CACHE` for persistence across launch directories. The database contains source, so keep it outside version control. A future shared hosted service should use PostgreSQL for repository/session metadata and object storage for larger immutable graph snapshots; a dedicated graph database is unnecessary for the current in-memory traversals.
+
+The agent integration follows [OpenAI's non-interactive Codex documentation](https://learn.chatgpt.com/docs/non-interactive-mode). Chat text is rendered as plain text. Authentication remains with the local CLI; CodeMRI does not collect an API key. This implementation supports Codex, not a Claude Code provider or full parity with either product's UI.
+
+### Create: propose architecture changes
+
+Open **Create** after analyzing a repository to edit a saved architecture draft. Add or remove components, edit responsibilities, draw typed connections, drag nodes, and undo/redo. Start from the existing architecture or a blank additive canvas. Layout changes do not request code changes.
+
+Describe intent and acceptance criteria, then use **Check locally** (no model tokens), **Assess & plan with Codex** (read-only source assessment), and **Implement reviewed plan**. Implementation uses the existing temporary-copy/file-approval workflow. Source changes and semantic draft edits invalidate old plans. Drafts save locally in VS Code workspace state. Restart the backend and reload the rebuilt extension to enable the new freshness endpoint and editor.
+
+See [Create mode scope and limitations](docs/create-mode.md) for persistence, removal semantics, verification, and the boundaries of feasibility checks.

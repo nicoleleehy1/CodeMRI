@@ -12,7 +12,7 @@ import re
 import tomllib
 import yaml
 
-SKIP = {'node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'coverage', '.next', '.codemri', '__pycache__', '.pytest_cache', 'target', 'vendor'}
+SKIP = {'node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'coverage', '.next', '.codemri', '.codemri-preview', '__pycache__', '.pytest_cache', 'target', 'vendor'}
 SOURCE = {'.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.py', '.go', '.rs', '.java', '.kt', '.cs', '.rb', '.php', '.vue', '.svelte', '.sql', '.prisma', '.graphql', '.proto', '.html'}
 CONFIG = {'package.json', 'pyproject.toml', 'requirements.txt', 'Cargo.toml', 'go.mod', 'pom.xml', 'Gemfile', 'composer.json', 'docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml', 'Dockerfile', 'README.md'}
 ROLES = ['Frontend', 'API', 'Services', 'Databases', 'Infrastructure', 'Tests', 'Shared']
@@ -240,4 +240,5 @@ def build_layers(root, graph):
         'limitations':['Component roles are inferred from path/framework conventions.', 'Java and TS/JS symbols have partial static call resolution; other languages are primarily inventoried.', 'Reads, writes, mutations, returns and test coverage are not inferred from names.']}
     from .system_map import apply_system_map
     apply_system_map(graph, files, file_edges)
-    return graph
+    from .hierarchy import build_hierarchy
+    return build_hierarchy(graph, files)

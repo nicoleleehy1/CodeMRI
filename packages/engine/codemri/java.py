@@ -3,7 +3,8 @@ from pathlib import Path
 from collections import defaultdict
 from tree_sitter import Language, Parser
 import tree_sitter_java
-from .models import Symbol, Edge
+from .models import Symbol, Edge, CallSite, merge_edges
+from .symbol_details import function_details, declaration_details, function_calls
 
 
 def walk(node):
@@ -54,10 +55,17 @@ def extend_java(root, graph):
                 return len(data[data.rfind(b'\n',0,offset)+1:offset].decode('utf-8').encode('utf-16-le'))//2
             symbol=Symbol(id=f'{path}::java@{node.start_byte}',name=text(name),kind=node.type,path=path,start_line=node.start_point.row+1,end_line=node.end_point.row+1,start_column=column(node.start_byte),end_column=column(node.end_byte),source=text(node))
             if node.type in METHODS:
+                symbol.details=function_details(node, owner)
+                symbol.call_occurrences=function_calls(node, path, data)
+                symbol.details["calls"]=list(dict.fromkeys(c.label for c in symbol.call_occurrences))
                 symbol.signature=symbol.name+text(node.child_by_field_name('parameters'))
+            else:
+                symbol.details=declaration_details(node)
             graph.nodes.append(symbol)
-            graph.edges.append(Edge(source=owner_id or path,target=symbol.id,kind='contains'))
-            record={'ast':node,'symbol':symbol,'owner':owner_id,'path':path}
+            container=ancestor(node,CLASSES|METHODS)
+            parent_id=f'{path}::java@{container.start_byte}' if container else path
+            graph.edges.append(Edge(source=parent_id,target=symbol.id,kind='contains'))
+            record={'ast':node,'symbol':symbol,'owner':owner_id,'path':path,'data':data}
             if node.type in CLASSES:
                 classes.append(record);by_name[symbol.name].append(record)
             else:
@@ -129,8 +137,11 @@ def extend_java(root, graph):
                 if matches:
                     candidates=matches;break
             if len(candidates)==1:
-                graph.edges.append(Edge(source=method['symbol'].id,target=candidates[0]['symbol'].id,kind='calls'))
+                graph.edges.append(Edge(source=method['symbol'].id,target=candidates[0]['symbol'].id,kind='calls',call_sites=[CallSite(
+                    path=method['path'], line=call.start_point.row+1,
+                    column=len(method['data'][call.start_byte-call.start_point.column:call.start_byte].decode('utf-8').encode('utf-16-le'))//2,
+                    expression=text(call))]))
             elif target_class:
                 graph.warnings.append(f'Unresolved Java call: {method["path"]}:{call.start_point.row+1}: {text(call.child_by_field_name("name")) or "constructor"} (overload or unsupported dispatch)')
-    graph.edges=list({(e.source,e.target,e.kind):e for e in graph.edges}.values())
+    graph.edges=merge_edges(graph.edges)
     return graph

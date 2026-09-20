@@ -286,4 +286,5 @@ def synthesize(graph):
         if parents:
             symbol.component_id=parents[0]['id']
             symbol.module_id=f"{parents[0]['id']}:module"
-    return graph
+    from .hierarchy import build_hierarchy
+    return build_hierarchy(graph, files)

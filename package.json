@@ -7,7 +7,7 @@
   "scripts": {
     "build": "npm run build -w codemri",
     "check": "npm run check -w codemri",
-    "test": "npm run build && node --test tests/extension.test.cjs tests/renderer.test.cjs && .venv/bin/python -m pytest -q"
+    "test": "npm run build && node --test tests/extension.test.cjs tests/renderer.test.cjs tests/create.test.cjs && .venv/bin/python -m pytest -q"
   },
   "engines": {
     "node": ">=20"

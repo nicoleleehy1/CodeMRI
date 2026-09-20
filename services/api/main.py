@@ -46,11 +46,23 @@ def scan(request: AnalyzeRequest):
         graph = analyze(root)
     except (ValueError, OSError) as exc:
         raise HTTPException(400, str(exc))
-    return {"repo_id": store.save(graph), "graph": graph}
+    repo_id = store.save(graph)
+    return {"repo_id": repo_id, "graph": graph, **store.review(repo_id)}
 
 @app.get("/graphs/{repo_id}")
 def get_graph(repo_id: str):
     return load(repo_id)
+
+@app.get("/graphs/{repo_id}/freshness")
+def get_freshness(repo_id: str):
+    """Check source revision without replacing a saved AI architecture or review baseline."""
+    graph = load(repo_id)
+    try:
+        current = analyze(Path(graph.root))
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc))
+    return {"revision": current.revision, "matches": current.revision == graph.revision}
+
 
 @app.post("/graphs/{repo_id}/impact")
 def get_impact(repo_id: str, request: ContextRequest):
@@ -73,3 +85,42 @@ def generate_architecture(repo_id: str):
         raise HTTPException(400, str(exc))
     store.save(graph)
     return {"repo_id": repo_id, "graph": graph}
+
+
+class ReviewRequest(BaseModel):
+    revision: str
+
+@app.post("/graphs/{repo_id}/review")
+def accept_review(repo_id: str, request: ReviewRequest):
+    load(repo_id)
+    try:
+        store.accept(repo_id, request.revision)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return store.review(repo_id)
+
+
+class ProposedFile(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    before: str | None = Field(max_length=2_000_000)
+    after: str | None = Field(max_length=2_000_000)
+
+
+class PreviewRequest(BaseModel):
+    root: str
+    files: list[ProposedFile] = Field(max_length=1000)
+
+
+@app.post('/preview')
+def preview_proposal(request: PreviewRequest):
+    from codemri.proposals import preview
+    root = Path(request.root).resolve()
+    allowed = Path(os.environ.get('CODEMRI_ALLOWED_ROOT', os.getcwd())).resolve()
+    if not root.is_relative_to(allowed):
+        raise HTTPException(403, 'Repository must be under CODEMRI_ALLOWED_ROOT')
+    if sum(len(f.before or '') + len(f.after or '') for f in request.files) > 20_000_000:
+        raise HTTPException(413, 'Proposal is too large to preview')
+    try:
+        return preview(root, request.files)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc))
