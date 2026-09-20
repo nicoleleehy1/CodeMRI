@@ -125,3 +125,40 @@ def preview_proposal(request: PreviewRequest):
         return preview(root, request.files)
     except (ValueError, OSError) as exc:
         raise HTTPException(400, str(exc))
+
+
+class TestRunRequest(BaseModel):
+    """Explicit, user-initiated test execution. Either a change description (tests are selected by impact) or
+    explicit selectors; optional proposed file contents are applied to the isolated copy first."""
+    query: str | None = Field(default=None, max_length=10000)
+    seed_ids: list[str] = Field(default_factory=list)
+    selection: list[dict] | None = Field(default=None, max_length=500)
+    files: list[ProposedFile] = Field(default_factory=list, max_length=1000)
+    timeout: int = Field(default=300, ge=5, le=3600)
+
+
+@app.post('/graphs/{repo_id}/tests/run')
+def run_selected_tests(repo_id: str, request: TestRunRequest):
+    from codemri.runner import run_tests
+    graph = load(repo_id)
+    root = allowed_or_403(graph.root)
+    if request.selection is None:
+        if not request.query and not request.seed_ids:
+            raise HTTPException(400, 'Provide a change description, seed_ids, or an explicit selection')
+        selection = impact(graph, request.query or '', request.seed_ids)['tests']['tests']
+    else:
+        selection = request.selection
+    try:
+        result = run_tests(root, selection, [f.model_dump() for f in request.files], request.timeout)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc))
+    result['selection'] = [{'name': t.get('name'), 'path': t.get('path'), 'selector': t.get('selector', t)} for t in selection]
+    result['id'] = store.save_run(repo_id, graph.revision, result)
+    result['revision'] = graph.revision
+    return result
+
+
+@app.get('/graphs/{repo_id}/tests/runs')
+def list_test_runs(repo_id: str):
+    load(repo_id)
+    return store.runs(repo_id)

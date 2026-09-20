@@ -264,7 +264,8 @@ window.addEventListener('message',({data:m})=>{
  if(m.type==='graph'){proposalId=m.proposalId;proposedFiles=m.files||[];selectedFiles.clear();proposalBusy=false;drawFileDiff(document,undefined);latestGraph=m.graph;baselineGraph=m.baseline;changes=m.changes||{};changeIndex=-1;$('reviewLocation').textContent='';drawReview();orders={};labelSelection.clear();labelPopup=undefined;$('sortMenu').hidden=true;history=[];mainNodeId=undefined;mainTrail=[];focus=undefined;selected=undefined;systemLayout=undefined;symbolLayout=undefined;symbolViewKey=undefined;svg.dataset.systemFitted='';graph=m.graph;drawSearchResults();component=undefined;moduleId=undefined;fileId=undefined;parentSymbol=undefined;$('layer').value=graph.layers?.repository?'repository':'architecture';affected.clear();contextText='';$('context').textContent='';$('status').textContent=`${graph.layers?.architecture.nodes.length||0} system components · ${graph.nodes.length} source nodes · snapshot ${graph.revision}${m.stale?' · stale':''}`;$('warnings').textContent=[...(graph.inventory?.limitations||[]),...graph.warnings].join('\n')||'No diagnostics.';render();fit();if(proposalId && proposedFiles.length)visitChange(0);}
  if(m.type==='select'){selected=m.id;render();}
  if(m.type==='status'||m.type==='error')$('status').textContent=m.message;
- if(m.type==='impact'){affected=new Set(m.result.affected);$('details').textContent=`${m.result.direct.length} direct · ${m.result.affected.length} affected. ${m.result.limitations}`;$('context').textContent=Object.entries(m.result.reasons).map(([id,why])=>`${graph.nodes.find(n=>n.id===id)?.name}: ${why}`).join('\n');render();}
+ if(m.type==='impact'){affected=new Set(m.result.affected);const tests=m.result.tests||{tests:[]};$('details').textContent=`${m.result.direct.length} direct · ${m.result.affected.length} affected · ${tests.tests.length?tests.tests.length+' associated test(s)':'no identified tests'}. ${m.result.limitations}`;$('context').textContent=Object.entries(m.result.reasons).map(([id,why])=>`${graph.nodes.find(n=>n.id===id)?.name}: ${why}`).join('\n')+(tests.tests.length?'\n\nAssociated tests (heuristic):\n'+tests.tests.map(t=>`${t.path}${t.name&&t.name!==t.path?' · '+t.name:''} — via ${[...new Set(t.justification.map(j=>j.symbol_name+' ('+j.via+')'))].join(', ')}`).join('\n'):'');$('runTests').disabled=!tests.tests.length;render();}
+ if(m.type==='testResults'){drawTestResults(m.result);}
  if(m.type==='context'){contextText=m.result.text;affected=new Set(m.result.selected);$('details').textContent=`${m.result.tokens.toLocaleString()} / ${m.result.budget.toLocaleString()} tokens · ${m.result.selected.length} symbols · indexed source ${m.result.repository_tokens.toLocaleString()} tokens (cl100k_base)`;$('context').textContent=contextText;render();}
 });
 $('sortAlpha').onclick=()=>applyOrder('alphabetical');
@@ -276,6 +277,21 @@ $('closeMainNode').onclick=()=>{labelPopup=undefined;mainNodeId=undefined;mainTr
 $('generateAI').onclick=()=>vscode.postMessage({type:'analyze'});
 $('analyze').onclick=()=>vscode.postMessage({type:'generateAI'});
 $('impact').onclick=()=>vscode.postMessage({type:'impact',query:$('query').value});
+$('runTests').onclick=()=>vscode.postMessage({type:'runTests',query:$('query').value});
+function drawTestResults(result){
+ const box=$('testResults');box.hidden=false;
+ const totals=result.totals||{};
+ $('testHeading').textContent=`Tests ${result.status}${totals.passed!==undefined?` · ${totals.passed} passed · ${totals.failed} failed · ${totals.skipped} skipped`:''} · ${(result.duration_ms/1000).toFixed(1)}s`;
+ $('testNote').textContent=(result.note||'')+(result.isolation?' '+result.isolation+'.':'');
+ const list=$('testRuns');list.textContent='';
+ for(const run of result.runs||[]){
+  const item=document.createElement('li');item.className='test-run test-'+run.status;
+  const head=document.createElement('strong');head.textContent=`${run.status.toUpperCase()} · ${[run.tool,...run.args].join(' ')}${run.exit_code===null?'':' · exit '+run.exit_code}`;
+  const out=document.createElement('pre');out.textContent=((run.stdout||'')+(run.stderr?'\n'+run.stderr:'')).trim().slice(-4000)||'(no output)';
+  item.append(head,out);list.append(item);
+ }
+ if(!(result.runs||[]).length){const item=document.createElement('li');item.textContent='Nothing executed.';list.append(item);}
+}
 $('compile').onclick=()=>vscode.postMessage({type:'context',query:$('query').value,budget:Number($('budget').value)});
 $('copy').onclick=()=>{if(contextText)vscode.postMessage({type:'copy',text:contextText});};
 $('budget').oninput=()=>{$('budgetLabel').textContent=Number($('budget').value).toLocaleString()+' tokens';};

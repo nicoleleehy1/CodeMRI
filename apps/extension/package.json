@@ -41,6 +41,13 @@
           "default": "codex",
           "scope": "machine",
           "description": "Path to the installed Codex CLI. Run codex login before using the coding chat."
+        },
+        "codemri.testTimeout": {
+          "type": "number",
+          "default": 300,
+          "minimum": 5,
+          "maximum": 3600,
+          "description": "Seconds allowed for each impacted-test command when you click Run impacted tests."
         }
       }
     }
