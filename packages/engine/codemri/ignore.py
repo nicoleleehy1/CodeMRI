@@ -250,7 +250,7 @@ def walk_repository(root: Path) -> Walk:
     for directory, dirs, names in os.walk(root, followlinks=False):
         here = Path(directory)
         base = here.relative_to(root).as_posix() if here != root else ''
-        if base and ignorer.git_ignored is None:
+        if base and (ignorer.git_ignored is None or ignorer.tracked is not None):
             ignorer.load(here, base)
         kept = []
         for d in sorted(dirs):

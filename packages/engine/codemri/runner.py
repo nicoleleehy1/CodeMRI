@@ -96,9 +96,9 @@ def copy_repository(root: Path) -> Path:
 
 def apply_files(work: Path, files) -> list[str]:
     """Write proposed file contents (`{'path','before','after'}`; `after=None` deletes) into the copy. Never the real
-    checkout. Paths must resolve inside the copy (no symlinked parents). When `before` is a string it must match
-    the copy's current content, so a proposal made against an older revision is rejected as stale instead of
-    being tested on top of unrelated edits."""
+    checkout. Paths must resolve inside the copy (no symlinked parents). When `before` is present it must match the
+    copy's current content (`None` = the file must not exist yet), so a proposal made against an older revision is
+    rejected as stale instead of being tested on top of unrelated edits. Items without `before` overwrite."""
     written = []
     work = Path(work).resolve()
     for item in files or []:
@@ -109,10 +109,10 @@ def apply_files(work: Path, files) -> list[str]:
         if target.is_symlink() or any(p.is_symlink() for p in target.parents if p != work and p.is_relative_to(work)) \
                 or not target.parent.resolve().is_relative_to(work):
             raise ValueError(f'Refusing to write through a symbolic link: {item["path"]}')
-        before = item.get('before')
-        if isinstance(before, str):
+        if 'before' in item:
+            before = item['before']
             current = target.read_text(encoding='utf-8', errors='replace') if target.is_file() else None
-            if current != before:
+            if current != before:  # `before=None` is an addition: the path must still be absent
                 raise ValueError(f'Proposal is stale: {item["path"]} changed since the proposal was made; regenerate it')
         if item.get('after') is None:
             target.unlink(missing_ok=True)
@@ -147,13 +147,24 @@ def tail(text: str) -> str:
 
 SENSITIVE_ENV = re.compile(r'(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION|^AWS_|^GOOGLE_|^GCLOUD_|^AZURE_|^GITHUB_|^GH_|^NPM_|^PYPI_|^DOCKER_|^KUBE)', re.I)
 ENV_KEEP_VARIABLE = 'CODEMRI_SUBPROCESS_ENV_KEEP'
+PROXY_USERINFO = re.compile(r'^[a-z][a-z0-9+.-]*://[^/@\s]+@', re.I)
 
 
 def scrubbed_env() -> dict[str, str]:
     """Host environment minus credential-shaped variables and agent sockets. Names listed (comma separated) in
     `CODEMRI_SUBPROCESS_ENV_KEEP` are passed through deliberately, e.g. the API key the agent itself needs."""
     keep = {k.strip() for k in os.environ.get(ENV_KEEP_VARIABLE, '').split(',') if k.strip()}
-    return {k: v for k, v in os.environ.items() if k in keep or not SENSITIVE_ENV.search(k)}
+    env = {}
+    for k, v in os.environ.items():
+        if k in keep:
+            env[k] = v
+        elif SENSITIVE_ENV.search(k):
+            continue
+        elif k.upper().endswith('_PROXY') and PROXY_USERINFO.search(v):
+            continue  # proxy URLs carrying user:password are credentials too
+        else:
+            env[k] = v
+    return env
 
 
 def safe_path(cwd: Path, env: dict) -> str:
@@ -213,6 +224,8 @@ def run_process(args: list[str], cwd: Path, env: dict, timeout: int, stdin_text:
                     'stdin': subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL}
     if os.name == 'posix':
         popen_kwargs['start_new_session'] = True
+    else:
+        popen_kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(args, **popen_kwargs)
     out, err = BoundedCapture(proc.stdout), BoundedCapture(proc.stderr)
     if stdin_text is not None:
@@ -252,8 +265,10 @@ def kill_tree(proc: subprocess.Popen, grace: float = 3.0) -> None:
             if os.name == 'posix':
                 os.killpg(proc.pid, sig)
             else:
+                # Windows has no killpg; taskkill /T walks the parent/child tree that the launcher spawned.
+                subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True, timeout=grace + 5)
                 proc.kill()
-        except (ProcessLookupError, PermissionError, OSError):
+        except (ProcessLookupError, PermissionError, OSError, subprocess.SubprocessError):
             pass
     signal_group(signal.SIGTERM)
     deadline = time.monotonic() + grace

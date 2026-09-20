@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -161,8 +162,21 @@ def known_selectors(graph, selection: list[dict]) -> list[dict]:
     return chosen
 
 
+MAX_CONCURRENT_TEST_RUNS = int(os.environ.get('CODEMRI_MAX_TEST_RUNS', '2'))
+_test_run_slots = threading.BoundedSemaphore(MAX_CONCURRENT_TEST_RUNS)
+
+
 @app.post('/graphs/{repo_id}/tests/run')
 def run_selected_tests(repo_id: str, request: TestRunRequest):
+    if not _test_run_slots.acquire(blocking=False):
+        raise HTTPException(429, f'{MAX_CONCURRENT_TEST_RUNS} test run(s) already in progress; wait for one to finish')
+    try:
+        return _run_selected_tests(repo_id, request)
+    finally:
+        _test_run_slots.release()
+
+
+def _run_selected_tests(repo_id: str, request: TestRunRequest):
     from codemri.runner import run_tests
     graph = load(repo_id)
     root = allowed_or_403(graph.root)

@@ -185,13 +185,44 @@ LIMITATIONS = ('Heuristic: tests are linked by resolved direct calls, imports wi
                'they are selected when an affected node lives in the linked file, which requires symbol nodes (TS/JS/Java).')
 
 
+def java_build_tool(graph_root: str, test_path: str) -> str | None:
+    """`maven` / `gradle` from the nearest build manifest above the test file; None when absent or both are present."""
+    root = Path(graph_root)
+    for directory in [Path(test_path).parent, *Path(test_path).parents]:
+        here = root / directory
+        maven = (here / 'pom.xml').is_file()
+        gradle = any((here / f).is_file() for f in ('build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'))
+        if maven and gradle:
+            return None
+        if maven:
+            return 'maven'
+        if gradle:
+            return 'gradle'
+    return None
+
+
+def java_fqcn(test_path: str) -> str:
+    parts = Path(test_path).with_suffix('').parts
+    for marker in ('java', 'kotlin', 'groovy'):
+        if marker in parts:
+            return '.'.join(parts[parts.index(marker) + 1:])
+    return parts[-1]
+
+
 def selector_for(framework: str, test_node, graph_root: str) -> dict:
     """How to run just this test with the framework's own CLI. Paths are relative to the repository."""
     if framework == 'junit':
         cls = Path(test_node.path).stem
-        if test_node.kind == 'method_declaration':
-            return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}#{test_node.name}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
-        return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
+        build = java_build_tool(graph_root, test_node.path)
+        if build == 'maven':
+            if test_node.kind == 'method_declaration':
+                return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}#{test_node.name}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
+            return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
+        if build == 'gradle':
+            fqcn = java_fqcn(test_node.path)
+            filter_ = f'{fqcn}.{test_node.name}' if test_node.kind == 'method_declaration' else fqcn
+            return {'tool': 'gradle', 'args': ['-q', 'test', '--tests', filter_]}
+        return {'tool': None, 'args': []}  # no or ambiguous build manifest: JUnit test known, runner unknown
     if framework == 'node:test':
         if re.search(r'\.[cm]?tsx?$', test_node.path):
             return {'tool': 'npx', 'args': ['tsx', '--test', test_node.path]}

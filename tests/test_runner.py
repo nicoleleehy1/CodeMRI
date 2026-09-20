@@ -69,7 +69,7 @@ def test_api_runs_impacted_shop_tests_and_stores_results(tmp_path, monkeypatch):
     assert sorted(s['path'] for s in run['selection']) == ['tests/checkout.test.ts', 'tests/pricing.test.ts']
     assert run['totals']['passed'] == 4
     broken = client.post(f'/graphs/{repo_id}/tests/run', json={'query': 'change applyCoupon', 'timeout': 120,
-        'files': [{'path': 'src/coupons.ts', 'before': None, 'after': 'export function applyCoupon(total: number, discount: number): number {\n  return total - discount;\n}\n'}]}).json()
+        'files': [{'path': 'src/coupons.ts', 'before': (SHOP / 'src/coupons.ts').read_text(), 'after': 'export function applyCoupon(total: number, discount: number): number {\n  return total - discount;\n}\n'}]}).json()
     assert broken['status'] == 'failed' and broken['totals']['failed'] >= 1
     assert (work / 'src/coupons.ts').read_text().startswith('export function applyCoupon(total: number, discount: number): number {\n  return Math.max')
     assert broken['freshness']['matches'] is True
@@ -197,3 +197,22 @@ def test_all_skipped_suite_is_not_no_tests():
     from codemri.runner import summarize
     counts = summarize('pytest', '3 skipped in 0.10s', '')
     assert counts['skipped'] == 3 and counts['no_tests_ran'] is False
+
+
+def test_stale_addition_is_rejected_when_path_already_exists(tmp_path):
+    from codemri.runner import apply_files
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src/cache.ts').write_text('user wrote this\n')
+    with pytest.raises(ValueError, match='stale'):
+        apply_files(tmp_path, [{'path': 'src/cache.ts', 'before': None, 'after': 'proposed\n'}])
+    assert (tmp_path / 'src/cache.ts').read_text() == 'user wrote this\n'
+    apply_files(tmp_path, [{'path': 'src/new.ts', 'before': None, 'after': 'ok\n'}])
+    assert (tmp_path / 'src/new.ts').read_text() == 'ok\n'
+
+
+def test_proxy_credentials_are_scrubbed(monkeypatch):
+    from codemri.runner import scrubbed_env
+    monkeypatch.setenv('HTTPS_PROXY', 'http://user:pw@proxy.example:3128')
+    monkeypatch.setenv('HTTP_PROXY', 'http://proxy.example:3128')
+    env = scrubbed_env()
+    assert 'HTTPS_PROXY' not in env and env['HTTP_PROXY'] == 'http://proxy.example:3128'

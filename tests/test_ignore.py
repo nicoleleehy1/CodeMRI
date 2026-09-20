@@ -149,3 +149,21 @@ def test_run_process_does_not_hang_on_backgrounded_descendant(tmp_path):
     proc = run_process(['python3', 'bg.py'], tmp_path, scrubbed_env(), timeout=3)
     assert proc.returncode == 0 and 'launcher done' in proc.stdout
     assert time.monotonic() - started < 15
+
+
+def test_copy_applies_nested_gitignore_to_new_files(tmp_path):
+    import subprocess
+    from codemri.ignore import write_copy_marker
+    root = tmp_path / 'repo'
+    (root / 'packages/client').mkdir(parents=True)
+    (root / 'packages/client/.gitignore').write_text('generated/\n')
+    (root / 'packages/client/index.ts').write_text('export const a = 1;\n')
+    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+    subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+    copy = tmp_path / 'copy'
+    shutil.copytree(root, copy, ignore=shutil.ignore_patterns('.git'))
+    assert write_copy_marker(root, copy)
+    (copy / 'packages/client/generated').mkdir()
+    (copy / 'packages/client/generated/api.ts').write_text('x')
+    files = walk_repository(copy).files
+    assert 'packages/client/index.ts' in files and 'packages/client/generated/api.ts' not in files

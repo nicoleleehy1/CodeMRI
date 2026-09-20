@@ -114,3 +114,16 @@ def test_js_frameworks_get_their_own_runner_or_no_command():
     assert framework_of('tests/user.test.ts', "import { jest } from '@jest/globals'") == 'jest'
     assert framework_of('tests/user.test.js', "const assert = require('assert'); describe('x', () => {})") == 'js-test'
     assert selector_for('js-test', node, '.')['tool'] is None  # unknown runner: never manufacture a command
+
+
+def test_junit_selector_follows_build_manifest(tmp_path):
+    from types import SimpleNamespace
+    from codemri.tests_graph import selector_for
+    node = SimpleNamespace(path='src/test/java/app/CartTest.java', kind='method_declaration', name='totals')
+    assert selector_for('junit', node, str(tmp_path))['tool'] is None
+    (tmp_path / 'build.gradle').write_text('')
+    assert selector_for('junit', node, str(tmp_path)) == {'tool': 'gradle', 'args': ['-q', 'test', '--tests', 'app.CartTest.totals']}
+    (tmp_path / 'pom.xml').write_text('')
+    assert selector_for('junit', node, str(tmp_path))['tool'] is None  # both manifests: ambiguous
+    (tmp_path / 'build.gradle').unlink()
+    assert selector_for('junit', node, str(tmp_path))['tool'] == 'mvn'
