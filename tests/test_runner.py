@@ -227,3 +227,13 @@ def test_failed_copy_removes_its_temporary_directory(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         runner.copy_repository(tmp_path)
     assert set(Path(tempfile.gettempdir()).glob('codemri-run-*')) == before
+
+
+def test_tool_paths_are_rejected_even_with_an_allowed_basename():
+    with pytest.raises(ValueError):
+        parse_commands([{'tool': '/opt/evil/node', 'args': ['--test', 'a.js']}])
+
+
+def test_empty_suite_before_positive_aggregate_is_not_no_tests():
+    out = 'Tests run: 0, Failures: 0, Errors: 0, Skipped: 0\nResults:\nTests run: 5, Failures: 0, Errors: 0, Skipped: 0\n'
+    assert summarize('mvn', out, '') == {'passed': 5, 'failed': 0, 'skipped': 0, 'no_tests_ran': False}

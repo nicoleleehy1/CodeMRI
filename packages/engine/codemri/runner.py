@@ -44,7 +44,8 @@ def parse_commands(selection) -> list[Command]:
         tool, args = sel.get('tool'), list(sel.get('args', []))
         if not tool:
             continue
-        if Path(tool).name not in ALLOWED_TOOLS or any(not isinstance(a, str) or '\0' in a for a in args):
+        if tool not in ALLOWED_TOOLS or any(not isinstance(a, str) or '\0' in a for a in args):
+            # Bare names only: the binary is then resolved on a PATH that excludes the copy, never a caller-chosen path.
             raise ValueError(f'Refusing to run {tool!r}; allowed test tools are {sorted(ALLOWED_TOOLS)}')
         key = (tool, tuple(args))
         if key in seen:
@@ -145,7 +146,8 @@ def summarize(tool: str, stdout: str, stderr: str) -> dict:
     elif Path(tool).name in {'pytest', 'python', 'python3'} and (m := PYTEST_SUMMARY.search(text)) and any(m.groupdict().values()):
         g = {k: int(v or 0) for k, v in m.groupdict().items()}
         counts = {'passed': g['passed'], 'failed': g['failed'] + g['errors'], 'skipped': g['skipped']}
-    counts['no_tests_ran'] = bool(NO_TESTS.search(text)) or (bool(counts) and counts.get('passed', 0) + counts.get('failed', 0) + counts.get('skipped', 0) == 0)
+    total = counts.get('passed', 0) + counts.get('failed', 0) + counts.get('skipped', 0)
+    counts['no_tests_ran'] = total == 0 if counts else bool(NO_TESTS.search(text))
     return counts
 
 
