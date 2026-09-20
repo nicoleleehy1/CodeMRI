@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from codemri.analyzer import analyze
+from codemri.roots import resolve_allowed
 from codemri.store import Store
 from codemri.context import impact, compile_context
 
@@ -18,6 +19,12 @@ class ContextRequest(BaseModel):
     query: str = Field(max_length=10000)
     seed_ids: list[str] = Field(default_factory=list)
     budget: int = Field(default=4000, ge=64, le=32000)
+
+def allowed_or_403(root: str) -> Path:
+    try:
+        return resolve_allowed(root)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
 
 def load(repo_id):
     try:
@@ -38,10 +45,7 @@ def ai_status():
 
 @app.post("/analyze")
 def scan(request: AnalyzeRequest):
-    root = Path(request.root).resolve()
-    allowed = Path(os.environ.get("CODEMRI_ALLOWED_ROOT", os.getcwd())).resolve()
-    if not root.is_relative_to(allowed):
-        raise HTTPException(403, "Repository must be under CODEMRI_ALLOWED_ROOT")
+    root = allowed_or_403(request.root)
     try:
         graph = analyze(root)
     except (ValueError, OSError) as exc:
@@ -114,10 +118,7 @@ class PreviewRequest(BaseModel):
 @app.post('/preview')
 def preview_proposal(request: PreviewRequest):
     from codemri.proposals import preview
-    root = Path(request.root).resolve()
-    allowed = Path(os.environ.get('CODEMRI_ALLOWED_ROOT', os.getcwd())).resolve()
-    if not root.is_relative_to(allowed):
-        raise HTTPException(403, 'Repository must be under CODEMRI_ALLOWED_ROOT')
+    root = allowed_or_403(request.root)
     if sum(len(f.before or '') + len(f.after or '') for f in request.files) > 20_000_000:
         raise HTTPException(413, 'Proposal is too large to preview')
     try:

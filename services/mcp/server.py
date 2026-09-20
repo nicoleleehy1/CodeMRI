@@ -1,8 +1,7 @@
 """Run from monorepo root: python -m services.mcp.server."""
-import os
-from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from codemri.analyzer import analyze
+from codemri.roots import resolve_allowed
 from codemri.store import Store
 from codemri.context import impact, compile_context
 
@@ -11,23 +10,33 @@ store = Store()
 
 @mcp.tool()
 def analyze_repository(root: str) -> dict:
-    """Build and persist a graph of a local TS/JS repository under the allowed root."""
-    path = Path(root).resolve()
-    allowed = Path(os.environ.get("CODEMRI_ALLOWED_ROOT", os.getcwd())).resolve()
-    if not path.is_relative_to(allowed):
-        raise ValueError("Repository is outside CODEMRI_ALLOWED_ROOT")
-    graph = analyze(path)
+    """Analyze a local repository under CODEMRI_ALLOWED_ROOT and persist its graph.
+
+    Symbols and call edges are extracted for TypeScript/JavaScript and Java; other languages are
+    inventoried into the architecture layer only. Returns the repo_id used by the other tools.
+    """
+    graph = analyze(resolve_allowed(root))
     return {"repo_id": store.save(graph), "revision": graph.revision, "nodes": len(graph.nodes), "warnings": graph.warnings}
 
 @mcp.tool()
-def get_architecture(repo_id: str) -> dict:
-    """Return the persisted static graph. Reanalyze after edits."""
-    return store.load(repo_id).model_dump()
+def get_architecture(repo_id: str, compact: bool = True) -> dict:
+    """Return the persisted static graph. Reanalyze after edits.
+
+    With compact=True (default) symbol source bodies and per-call-site details are omitted so the
+    response stays small; fetch a symbol's source with get_symbol. compact=False returns everything.
+    """
+    graph = store.load(repo_id)
+    if not compact:
+        return graph.model_dump()
+    return graph.model_dump(exclude={'nodes': {'__all__': {'source', 'call_occurrences'}}, 'edges': {'__all__': {'call_sites'}}})
 
 @mcp.tool()
 def get_symbol(repo_id: str, symbol_id: str) -> dict:
     """Return source and location for a graph symbol."""
-    return next(n.model_dump() for n in store.load(repo_id).nodes if n.id == symbol_id)
+    node = next((n for n in store.load(repo_id).nodes if n.id == symbol_id), None)
+    if node is None:
+        raise ValueError(f'Unknown symbol ID {symbol_id!r}; list IDs with get_architecture')
+    return node.model_dump()
 
 @mcp.tool()
 def find_callers(repo_id: str, symbol_id: str) -> list[str]:
