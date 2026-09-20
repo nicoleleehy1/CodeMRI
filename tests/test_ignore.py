@@ -104,3 +104,13 @@ def test_git_checkout_keeps_tracked_files_matching_ignore_rules(tmp_path):
     assert 'src/main.ts' in walk.files and 'src/new.ts' not in walk.files and 'out.log' not in walk.files
     assert set(walk.skipped['gitignored']) == {'src/new.ts', 'out.log'}
     assert {n.name for n in analyze(root).nodes} >= {'A'} and 'B' not in {n.name for n in analyze(root).nodes}
+
+
+def test_fallback_gitignore_handles_double_star_like_git():
+    from codemri.ignore import gitmatch
+    assert gitmatch('docs/a.md', 'docs/**/*.md') and gitmatch('docs/x/y/a.md', 'docs/**/*.md')
+    assert not gitmatch('src/a.md', 'docs/**/*.md')
+    assert gitmatch('build/out/x.o', 'build/**') and not gitmatch('build', 'build/**')
+    assert gitmatch('a/b/c.log', '**/c.log') and gitmatch('c.log', '**/c.log')
+    assert not gitmatch('src/deep/a.js', 'src/*.js') and gitmatch('src/a.js', 'src/*.js')
+    assert gitmatch('dist/nested/file', 'dist')  # directory pattern covers everything beneath it

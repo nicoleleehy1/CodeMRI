@@ -38,6 +38,40 @@ def redact_secrets(text: str) -> tuple[str, int]:
     return SECRET_TEXT.sub(swap, text), count
 
 
+_GITMATCH_CACHE: dict[str, re.Pattern] = {}
+
+
+def gitmatch(relative: str, pattern: str) -> bool:
+    """Git wildmatch for slash-containing patterns: `*`/`?` never cross `/`, `**/` matches zero or more directories,
+    `/**` matches everything below, and a directory pattern also matches every path underneath it."""
+    regex = _GITMATCH_CACHE.get(pattern)
+    if regex is None:
+        out, i = '', 0
+        while i < len(pattern):
+            c = pattern[i]
+            if pattern.startswith('**/', i):
+                out += '(?:.*/)?'; i += 3; continue
+            if pattern.startswith('**', i):
+                out += '.*'; i += 2; continue
+            if c == '*':
+                out += '[^/]*'
+            elif c == '?':
+                out += '[^/]'
+            elif c == '[':
+                j = pattern.find(']', i + 1)
+                if j == -1:
+                    out += re.escape(c)
+                else:
+                    body = pattern[i + 1:j]
+                    body = '^' + body[1:] if body.startswith('!') else body
+                    out += '[' + body.replace('\\', '\\\\') + ']'; i = j
+            else:
+                out += re.escape(c)
+            i += 1
+        regex = _GITMATCH_CACHE[pattern] = re.compile('^(?:' + out + ')(?:/.*)?$')
+    return regex.match(relative) is not None
+
+
 @dataclass
 class Rule:
     pattern: str
@@ -53,9 +87,10 @@ class Rule:
             if not relative.startswith(self.base + '/'):
                 return False
             relative = relative[len(self.base) + 1:]
-        if self.anchored or '/' in self.pattern:
-            return fnmatchcase(relative, self.pattern) or fnmatchcase(relative, self.pattern.rstrip('/'))
-        return any(fnmatchcase(part, self.pattern) for part in relative.split('/'))
+        pattern = self.pattern.rstrip('/')
+        if self.anchored or '/' in pattern:
+            return gitmatch(relative, pattern)
+        return any(fnmatchcase(part, pattern) for part in relative.split('/'))
 
 
 def parse_gitignore(text: str, base: str) -> list[Rule]:

@@ -91,3 +91,15 @@ def test_pytest_files_are_discovered_without_python_symbol_nodes(tmp_path):
     assert [(l['symbol'], l['test']) for l in layer['links']] == [('calc.py', 'tests/test_calc.py')]
     assert layer['links'][0]['via'] in {'name', 'import'}
     assert not graph.nodes, 'file-level discovery must not invent Python symbol nodes'
+
+
+def test_python_only_repo_selects_pytest_file_from_change_intent(tmp_path):
+    (tmp_path / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests/test_calc.py').write_text('from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n')
+    graph = analyze(tmp_path)
+    from codemri.context import impact
+    result = impact(graph, 'change calc add')
+    assert 'calc.py' in result['affected']
+    assert [t['path'] for t in result['tests']['tests']] == ['tests/test_calc.py']
+    assert result['tests']['tests'][0]['selector']['tool'] in {'pytest', 'python', 'python3'}

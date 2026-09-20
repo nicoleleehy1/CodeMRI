@@ -126,6 +126,8 @@ def summarize(tool: str, stdout: str, stderr: str) -> dict:
     text = stdout + '\n' + stderr
     counts = {}
     if m := SUREFIRE.findall(text):
+        if 'Results:' in text:  # Maven prints per-class lines and then one aggregate under "Results:"; trust the aggregate.
+            m = SUREFIRE.findall(text[text.rindex('Results:'):])[-1:] or m
         run, failures, errors, skipped = (sum(int(x[i]) for x in m) for i in range(4))
         counts = {'passed': run - failures - errors - skipped, 'failed': failures + errors, 'skipped': skipped}
     elif m := TAP_COUNT.findall(text):
@@ -153,22 +155,79 @@ def scrubbed_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if k in keep or not SENSITIVE_ENV.search(k)}
 
 
+def safe_path(cwd: Path, env: dict) -> str:
+    """Executable lookup never consults the repository copy or relative entries, so a repo cannot ship its own `npx`."""
+    cwd = Path(cwd).resolve()
+    entries = []
+    for entry in (env.get('PATH') or os.defpath).split(os.pathsep):
+        p = Path(entry)
+        if entry and p.is_absolute() and not p.resolve().is_relative_to(cwd) and entry not in entries:
+            entries.append(entry)
+    return os.pathsep.join(entries)
+
+
+def resolve_tool(tool: str, cwd: Path, env: dict) -> str:
+    """Bare allow-listed names are resolved against `safe_path`; explicit paths must not point inside the copy."""
+    if os.sep in tool or (os.altsep and os.altsep in tool):
+        if Path(tool).resolve().is_relative_to(Path(cwd).resolve()):
+            raise ValueError(f'Refusing to run an executable inside the repository copy: {tool}')
+        return tool
+    found = shutil.which(tool, path=safe_path(cwd, env))
+    if not found:
+        raise OSError(f'{tool!r} not found on PATH')
+    return found
+
+
+class BoundedCapture:
+    """Reads a pipe on a thread, keeping only the last `limit` characters so a chatty test cannot exhaust memory."""
+    def __init__(self, stream, limit: int = OUTPUT_LIMIT):
+        import threading
+        self.chunks, self.size, self.limit, self.truncated = [], 0, limit, False
+        self.thread = threading.Thread(target=self._drain, args=(stream,), daemon=True)
+        self.thread.start()
+
+    def _drain(self, stream):
+        with stream:
+            while chunk := stream.read(8192):
+                self.chunks.append(chunk); self.size += len(chunk)
+                while self.size - len(self.chunks[0]) >= self.limit and len(self.chunks) > 1:
+                    self.size -= len(self.chunks.pop(0)); self.truncated = True
+
+    def text(self) -> str:
+        self.thread.join()
+        out = ''.join(self.chunks)
+        return out if not self.truncated and len(out) <= self.limit else out[-self.limit:]
+
+
 def run_process(args: list[str], cwd: Path, env: dict, timeout: int, stdin_text: str | None = None) -> subprocess.CompletedProcess:
     """`subprocess.run` that owns the whole process tree: the child starts its own session, and on timeout the
     entire group is terminated (SIGTERM, then SIGKILL) and reaped before `TimeoutExpired` is raised, so launchers
-    like npx/mvn cannot leave test processes running against a workspace that is about to be deleted."""
+    like npx/mvn cannot leave test processes running against a workspace that is about to be deleted. stdout/stderr
+    are drained continuously into bounded buffers (last OUTPUT_LIMIT characters); the executable is resolved on a
+    PATH that excludes the copy itself."""
+    env = dict(env)
+    env['PATH'] = safe_path(cwd, env)
+    args = [resolve_tool(args[0], cwd, env), *args[1:]]
     popen_kwargs = {'cwd': cwd, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.PIPE, 'text': True, 'errors': 'replace',
                     'stdin': subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL}
     if os.name == 'posix':
         popen_kwargs['start_new_session'] = True
     proc = subprocess.Popen(args, **popen_kwargs)
+    out, err = BoundedCapture(proc.stdout), BoundedCapture(proc.stderr)
+    if stdin_text is not None:
+        try:
+            proc.stdin.write(stdin_text)
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            proc.stdin.close()
     try:
-        out, err = proc.communicate(stdin_text, timeout=timeout)
+        proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_tree(proc)
-        out, err = proc.communicate()
-        raise subprocess.TimeoutExpired(args, timeout, output=out, stderr=err)
-    return subprocess.CompletedProcess(args, proc.returncode, out, err)
+        proc.wait()
+        raise subprocess.TimeoutExpired(args, timeout, output=out.text(), stderr=err.text())
+    return subprocess.CompletedProcess(args, proc.returncode, out.text(), err.text())
 
 
 def kill_tree(proc: subprocess.Popen, grace: float = 3.0) -> None:

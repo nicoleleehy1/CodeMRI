@@ -43,6 +43,13 @@ def impact(graph: Graph, query: str, seed_ids: list[str] | None = None, kinds=DE
                     next_nodes.add(new)
                     followed[kind] = followed.get(kind, 0) + 1
             frontier = next_nodes
+    # Python files have no symbol nodes; a file-level test link whose production path matches the intent still
+    # counts as affected so pytest tests can be selected (P3.1 file-level linking).
+    file_symbols = {l["symbol"] for l in (graph.layers.get("tests") or {}).get("links", []) if l["symbol"] not in by_id}
+    for path in sorted(file_symbols):
+        stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        if path not in reasons and any(w == stem or (len(w) >= 4 and w in stem) for w in words):
+            reasons[path] = "Lexical match to change intent (file-level; Python symbols are not extracted)"
     result = {"mode": "static-prototype", "direct": sorted(seeds), "affected": list(reasons), "reasons": reasons,
               "edge_kinds": list(kinds), "edges_followed": followed,
               "limitations": f"Lexical seeds; typed traversal over {', '.join(kinds)} "
@@ -189,6 +196,12 @@ def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
                     shortfall.append({"id": nested, "name": by_id[nested].name, "needed": full_cost[nested], "included": "none"})
         covered, excluded, text = render()
         tokens = count(text)
+    if tokens > budget:
+        # Nothing left to drop: the footer alone overflows. Fall back to the bare header; if even that fails the guard above lied.
+        text = header
+        tokens = count(text)
+        if tokens > budget:
+            raise ValueError("Task text exceeds token budget")
     excluded.sort(key=lambda i: order[i])
     tiers = {"included": [{"id": i, "name": by_id[i].name, "path": by_id[i].path, "tokens": full_cost[i]} for i in selected],
              "supporting": [{"id": i, "name": by_id[i].name, "path": by_id[i].path, "tokens": sig_cost[i]} for i in supporting],

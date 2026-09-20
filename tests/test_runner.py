@@ -145,3 +145,29 @@ def test_scrubbed_env_strips_credentials_but_honours_keep_list(monkeypatch):
     env = scrubbed_env()
     assert 'AWS_SECRET_ACCESS_KEY' not in env and 'SSH_AUTH_SOCK' not in env and 'GITHUB_TOKEN' not in env
     assert env['OPENAI_API_KEY'] == 'x' and env['PATH'] == '/usr/bin'
+
+
+def test_output_capture_is_bounded_and_repo_cannot_shadow_tools(tmp_path):
+    from codemri.runner import OUTPUT_LIMIT, run_process, scrubbed_env
+    repo = tmp_path / 'repo'
+    (repo / 'node_modules/.bin').mkdir(parents=True)
+    (repo / 'spam.py').write_text("import sys\nfor _ in range(20000): sys.stdout.write('x' * 100 + '\\n')\nprint('END')\n")
+    env = scrubbed_env()
+    env['PATH'] = str(repo / 'node_modules/.bin') + ':' + env.get('PATH', '')
+    proc = run_process(['python3', 'spam.py'], repo, env, timeout=60)
+    assert proc.returncode == 0 and proc.stdout.endswith('END\n') and len(proc.stdout) <= OUTPUT_LIMIT
+    assert str(repo) not in proc.args[0]
+    fake = repo / 'node_modules/.bin/python3'
+    fake.write_text('#!/bin/sh\necho hijacked\n'); fake.chmod(0o755)
+    proc = run_process(['python3', '-c', 'print("real")'], repo, env, timeout=30)
+    assert proc.stdout.strip() == 'real'
+    with pytest.raises(ValueError):
+        run_process([str(fake)], repo, env, timeout=30)
+
+
+def test_surefire_aggregate_is_not_double_counted():
+    from codemri.runner import summarize
+    out = ('[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.1 s - in a.ATest\n'
+           '[INFO] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.1 s - in a.BTest\n'
+           '[INFO] Results:\n[ERROR] Tests run: 5, Failures: 1, Errors: 0, Skipped: 0\n')
+    assert summarize('mvn', out, '') == {'passed': 4, 'failed': 1, 'skipped': 0, 'no_tests_ran': False}

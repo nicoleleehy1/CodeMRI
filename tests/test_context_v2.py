@@ -85,3 +85,13 @@ def test_exact_budget_trim_recomputes_coverage_and_footer(tmp_path):
     assert all(names[i] in {'Cart', 'price', 'total'} for i in result['excluded'])
     assert result['text'].count('omitted symbols') == 1 and '0 full' in result['text']
     assert any(s['name'] == 'Cart' for s in result['shortfall'])
+
+
+def test_near_budget_task_never_exceeds_budget(tmp_path):
+    (tmp_path / 'a.ts').write_text('export function alpha() { return 1; }\nexport function beta() { return alpha(); }\n')
+    graph = analyze(tmp_path)
+    task = 'change alpha beta ' + 'word ' * 60
+    from codemri.context import HEADER, count
+    budget = count(HEADER + task + '\n') + 3
+    result = compile_context(graph, task, budget)
+    assert result['tokens'] <= budget and result['selected'] == []
