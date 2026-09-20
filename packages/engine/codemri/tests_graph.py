@@ -185,8 +185,9 @@ LIMITATIONS = ('Heuristic: tests are linked by resolved direct calls, imports wi
                'they are selected when an affected node lives in the linked file, which requires symbol nodes (TS/JS/Java).')
 
 
-def java_build_tool(graph_root: str, test_path: str) -> str | None:
-    """`maven` / `gradle` from the nearest build manifest above the test file; None when absent or both are present."""
+def java_build_tool(graph_root: str, test_path: str) -> tuple[str, str] | None:
+    """(`maven`|`gradle`, manifest directory relative to the root) from the nearest build manifest above the test
+    file; None when absent or both are present."""
     root = Path(graph_root)
     for directory in [Path(test_path).parent, *Path(test_path).parents]:
         here = root / directory
@@ -194,10 +195,8 @@ def java_build_tool(graph_root: str, test_path: str) -> str | None:
         gradle = any((here / f).is_file() for f in ('build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'))
         if maven and gradle:
             return None
-        if maven:
-            return 'maven'
-        if gradle:
-            return 'gradle'
+        if maven or gradle:
+            return ('maven' if maven else 'gradle', directory.as_posix())
     return None
 
 
@@ -214,15 +213,17 @@ def selector_for(framework: str, test_node, graph_root: str) -> dict:
     if framework == 'junit':
         cls = Path(test_node.path).stem
         build = java_build_tool(graph_root, test_node.path)
-        if build == 'maven':
-            if test_node.kind == 'method_declaration':
-                return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}#{test_node.name}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
-            return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
-        if build == 'gradle':
-            fqcn = java_fqcn(test_node.path)
-            filter_ = f'{fqcn}.{test_node.name}' if test_node.kind == 'method_declaration' else fqcn
-            return {'tool': 'gradle', 'args': ['-q', 'test', '--tests', filter_]}
-        return {'tool': None, 'args': []}  # no or ambiguous build manifest: JUnit test known, runner unknown
+        if build is None:
+            return {'tool': None, 'args': []}  # no or ambiguous build manifest: JUnit test known, runner unknown
+        tool, where = build
+        nested = where not in ('', '.')  # commands run from the repository root; point the tool at the subproject
+        if tool == 'maven':
+            spec = f'{cls}#{test_node.name}' if test_node.kind == 'method_declaration' else cls
+            args = ['-q'] + (['-f', f'{where}/pom.xml'] if nested else []) + [f'-Dtest={spec}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']
+            return {'tool': 'mvn', 'args': args}
+        fqcn = java_fqcn(test_node.path)
+        filter_ = f'{fqcn}.{test_node.name}' if test_node.kind == 'method_declaration' else fqcn
+        return {'tool': 'gradle', 'args': ['-q'] + (['-p', where] if nested else []) + ['test', '--tests', filter_]}
     if framework == 'node:test':
         if re.search(r'\.[cm]?tsx?$', test_node.path):
             return {'tool': 'npx', 'args': ['tsx', '--test', test_node.path]}

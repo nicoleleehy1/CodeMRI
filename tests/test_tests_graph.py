@@ -127,3 +127,22 @@ def test_junit_selector_follows_build_manifest(tmp_path):
     assert selector_for('junit', node, str(tmp_path))['tool'] is None  # both manifests: ambiguous
     (tmp_path / 'build.gradle').unlink()
     assert selector_for('junit', node, str(tmp_path))['tool'] == 'mvn'
+
+
+def test_nested_java_build_is_addressed_from_the_root(tmp_path):
+    from types import SimpleNamespace
+    from codemri.tests_graph import selector_for
+    from codemri.runner import Command, merge_junit
+    (tmp_path / 'modules/cart').mkdir(parents=True)
+    (tmp_path / 'modules/cart/pom.xml').write_text('')
+    node = SimpleNamespace(path='modules/cart/src/test/java/app/CartTest.java', kind='class_declaration', name='CartTest')
+    sel = selector_for('junit', node, str(tmp_path))
+    assert sel['tool'] == 'mvn' and sel['args'][1:3] == ['-f', 'modules/cart/pom.xml']
+    (tmp_path / 'modules/cart/pom.xml').unlink()
+    (tmp_path / 'modules/cart/build.gradle.kts').write_text('')
+    assert selector_for('junit', node, str(tmp_path))['args'][1:3] == ['-p', 'modules/cart']
+    a = Command('mvn', ['-q', '-f', 'modules/cart/pom.xml', '-Dtest=A#x', 'test'])
+    b = Command('mvn', ['-q', '-f', 'modules/cart/pom.xml', '-Dtest=A#y', 'test'])
+    c = Command('mvn', ['-q', '-f', 'modules/other/pom.xml', '-Dtest=B#z', 'test'])
+    merged = merge_junit([a, b, c])
+    assert len(merged) == 2 and '-Dtest=A#x,A#y' in merged[0].args and '-Dtest=B#z' in merged[1].args

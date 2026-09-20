@@ -216,3 +216,14 @@ def test_proxy_credentials_are_scrubbed(monkeypatch):
     monkeypatch.setenv('HTTP_PROXY', 'http://proxy.example:3128')
     env = scrubbed_env()
     assert 'HTTPS_PROXY' not in env and env['HTTP_PROXY'] == 'http://proxy.example:3128'
+
+
+def test_failed_copy_removes_its_temporary_directory(tmp_path, monkeypatch):
+    import tempfile
+    from codemri import runner
+    (tmp_path / 'src').mkdir()
+    monkeypatch.setattr(runner, 'write_copy_marker', lambda root, work: (_ for _ in ()).throw(OSError('disk full')))
+    before = set(Path(tempfile.gettempdir()).glob('codemri-run-*'))
+    with pytest.raises(OSError):
+        runner.copy_repository(tmp_path)
+    assert set(Path(tempfile.gettempdir()).glob('codemri-run-*')) == before

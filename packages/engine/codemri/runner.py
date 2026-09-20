@@ -56,19 +56,23 @@ def parse_commands(selection) -> list[Command]:
 
 def merge_junit(commands: list[Command]) -> list[Command]:
     """Fold many `mvn -Dtest=Class#a`, `-Dtest=Class#b` into one Maven invocation; Maven startup dominates."""
-    tests, others, template = [], [], None
+    groups: dict[tuple, tuple[Command, list[str]]] = {}  # same build (tool + args minus -Dtest) -> template, tests
+    others = []
     for c in commands:
         spec = next((a for a in c.args if a.startswith('-Dtest=')), None)
         if Path(c.tool).name == 'mvn' and spec:
-            tests.append(spec[len('-Dtest='):]); template = c
+            key = (c.tool, tuple(a for a in c.args if not a.startswith('-Dtest=')))
+            groups.setdefault(key, (c, []))[1].append(spec[len('-Dtest='):])
         else:
             others.append(c)
-    if len(tests) > 1 and template:
-        args = [('-Dtest=' + ','.join(dict.fromkeys(tests))) if a.startswith('-Dtest=') else a for a in template.args]
-        others.insert(0, Command(template.tool, args, f'{len(tests)} JUnit tests'))
-    elif tests:
-        others.insert(0, template)
-    return others
+    merged = []
+    for template, tests in groups.values():
+        if len(tests) > 1:
+            args = [('-Dtest=' + ','.join(dict.fromkeys(tests))) if a.startswith('-Dtest=') else a for a in template.args]
+            merged.append(Command(template.tool, args, f'{len(tests)} JUnit tests'))
+        else:
+            merged.append(template)
+    return merged + others
 
 
 def copy_repository(root: Path) -> Path:
@@ -89,8 +93,12 @@ def copy_repository(root: Path) -> Path:
                 if target.is_absolute() or not (source.parent / target).resolve().is_relative_to(root):
                     skip.append(name)
         return skip
-    shutil.copytree(root, work, symlinks=True, ignore=ignore)
-    write_copy_marker(root, work)
+    try:
+        shutil.copytree(root, work, symlinks=True, ignore=ignore)
+        write_copy_marker(root, work)
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
     return work
 
 
