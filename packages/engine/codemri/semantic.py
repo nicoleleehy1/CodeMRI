@@ -11,6 +11,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .architecture import inventory
+from .ignore import redact_secrets
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -181,19 +182,22 @@ def context_payload(files):
     ordered=sorted(files,key=lambda p:(0 if Path(p).name.lower()=='readme.md' else 2 if '/test/' in p or '/tests/' in p else 1,p))
     remaining=140000
     excerpts=[]
+    redactions=0
     for path in ordered:
         if remaining<=0:
             break
         # Number the lines so the model reads line numbers instead of estimating them. The budget
         # counts the numbered text, and truncation stops at a line boundary when there is one.
-        numbered='\n'.join(f'{n}| {text}' for n,text in enumerate(files[path].splitlines(),1))
+        clean,count=redact_secrets(files[path])
+        redactions+=count
+        numbered='\n'.join(f'{n}| {text}' for n,text in enumerate(clean.splitlines(),1))
         limit=min(16000,remaining)
         excerpt=numbered[:limit]
         if len(numbered)>limit and '\n' in excerpt:
             excerpt=excerpt[:excerpt.rfind('\n')]
         excerpts.append({'path':path,'partial':len(excerpt)<len(numbered),'source':excerpt})
         remaining-=len(excerpt)
-    return {'file_tree':sorted(files),'source_files':excerpts,'coverage':{'sampled':len(excerpts),'total':len(files)}}
+    return {'file_tree':sorted(files),'source_files':excerpts,'coverage':{'sampled':len(excerpts),'total':len(files),'redacted_secrets':redactions}}
 
 
 def provider_error(response):

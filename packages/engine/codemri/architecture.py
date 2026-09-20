@@ -11,24 +11,25 @@ import os
 import re
 import tomllib
 import yaml
+from .ignore import walk_repository
 
-SKIP = {'node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'coverage', '.next', '.codemri', '.codemri-preview', '__pycache__', '.pytest_cache', 'target', 'vendor'}
 SOURCE = {'.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.py', '.go', '.rs', '.java', '.kt', '.cs', '.rb', '.php', '.vue', '.svelte', '.sql', '.prisma', '.graphql', '.proto', '.html'}
 CONFIG = {'package.json', 'pyproject.toml', 'requirements.txt', 'Cargo.toml', 'go.mod', 'pom.xml', 'Gemfile', 'composer.json', 'docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml', 'Dockerfile', 'README.md'}
 ROLES = ['Frontend', 'API', 'Services', 'Databases', 'Infrastructure', 'Tests', 'Shared']
 
-def inventory(root):
+def inventory(root, walk=None):
+    """Source and manifest files that analysis may read. `.gitignore`d, virtualenv and secret files are excluded."""
+    root = Path(root)
+    walk = walk or walk_repository(root)
     files, warnings = {}, []
-    for folder, dirs, names in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if d not in SKIP and not d.endswith('.egg-info') and not Path(folder, d).is_symlink())
-        for name in sorted(names):
-            p = Path(folder, name)
-            if p.is_symlink() or (p.suffix not in SOURCE and name not in CONFIG):
-                continue
-            if p.stat().st_size > 1_000_000:
-                warnings.append(f'Architecture inventory skipped large file: {p.relative_to(root)}')
-                continue
-            files[p.relative_to(root).as_posix()] = p.read_text(errors='replace')
+    for relative in walk.files:
+        p = root / relative
+        if p.suffix not in SOURCE and p.name not in CONFIG:
+            continue
+        if p.stat().st_size > 1_000_000:
+            warnings.append(f'Architecture inventory skipped large file: {relative}')
+            continue
+        files[relative] = p.read_text(errors='replace')
     return files, warnings
 
 def role_for(path, source):
@@ -56,8 +57,10 @@ def package_for(path, boundaries):
         return '/'.join(parts[:2])
     return '.'
 
-def build_layers(root, graph):
-    files, warnings = inventory(root)
+def build_layers(root, graph, walk=None):
+    walk = walk or walk_repository(root)
+    files, warnings = inventory(root, walk)
+    warnings = warnings + walk.summary()
     boundaries = {str(Path(p).parent) for p in files if Path(p).name in {'package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'pom.xml'} and str(Path(p).parent) != '.'}
     components, modules, assignment = {}, {}, {}
     edges = {'architecture': {}, 'modules': {}}
@@ -236,6 +239,7 @@ def build_layers(root, graph):
         'modules': {'nodes':list(modules.values()), 'edges':list(edges['modules'].values())},
     }
     graph.inventory = {'files':len(files),'languages':sorted({Path(p).suffix.lstrip('.') for p in files if Path(p).suffix in SOURCE}),
+        'skipped':{reason:len(paths) for reason,paths in walk.skipped.items()},
         'relationships':'Static evidence, not observed runtime execution',
         'limitations':['Component roles are inferred from path/framework conventions.', 'Java and TS/JS symbols have partial static call resolution; other languages are primarily inventoried.', 'Reads, writes, mutations, returns and test coverage are not inferred from names.']}
     from .system_map import apply_system_map
