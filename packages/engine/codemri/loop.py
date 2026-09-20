@@ -25,7 +25,7 @@ from .changes import changes
 from .context import compile_context, impact
 from .ignore import walk_repository
 from .runner import (COPY_EXCLUDED, DEFAULT_TIMEOUT, OUTPUT_LIMIT, copy_repository, merge_junit,
-                     parse_commands, run_in_copy)
+                     parse_commands, run_in_copy, run_process, scrubbed_env)
 
 VARIANTS = ('codemri', 'baseline')
 AGENT_INSTRUCTIONS = ('Work only in the current directory, which is a temporary repository copy; edits are '
@@ -71,10 +71,11 @@ def patch_between(before: dict[str, bytes], after: dict[str, bytes]) -> dict:
 def run_agent(work: Path, command: list[str], prompt: str, timeout: int) -> dict:
     """Run the agent command in the copy with the prompt on stdin; capture output, usage-like JSON and timing."""
     started = time.monotonic()
-    env = {k: v for k, v in os.environ.items() if not any(s in k.upper() for s in ('SECRET', 'TOKEN', 'PASSWORD'))}
+    # Credential-shaped variables are stripped; name what the agent needs in CODEMRI_SUBPROCESS_ENV_KEEP (e.g. OPENAI_API_KEY).
+    env = scrubbed_env()
     result = {'command': command, 'cwd': str(work), 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest()}
     try:
-        proc = subprocess.run(command, cwd=work, input=prompt, capture_output=True, text=True, timeout=timeout, env=env, errors='replace')
+        proc = run_process(command, work, env, timeout, stdin_text=prompt)
         result.update(exit_code=proc.returncode, status='completed' if proc.returncode == 0 else 'failed',
                       stdout=proc.stdout[-OUTPUT_LIMIT:], stderr=proc.stderr[-OUTPUT_LIMIT:])
     except subprocess.TimeoutExpired as exc:

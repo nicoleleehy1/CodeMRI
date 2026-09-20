@@ -102,3 +102,46 @@ def test_api_only_runs_selectors_codemri_derived(tmp_path, monkeypatch):
     assert evil.status_code == 400 and 'Unknown test selector' in evil.text
     ok = client.post(f'/graphs/{repo_id}/tests/run', json={'selection': [{'tool': 'node', 'args': ['--test', 'math.test.js']}], 'timeout': 60}).json()
     assert ok['status'] == 'passed' and ok['selection'][0]['path'] == 'math.test.js'
+
+
+def test_timeout_kills_the_whole_process_tree(tmp_path):
+    (tmp_path / 'repo').mkdir()
+    marker = tmp_path / 'child-alive'
+    # A launcher (python) that spawns a grandchild which would keep running after the launcher dies.
+    (tmp_path / 'repo/child.py').write_text(f"import time, pathlib\nwhile True:\n    pathlib.Path({str(marker)!r}).write_text(str(time.time()))\n    time.sleep(0.1)\n")
+    (tmp_path / 'repo/launch.py').write_text("import subprocess, sys, time\nsubprocess.Popen([sys.executable, 'child.py'])\ntime.sleep(60)\n")
+    result = run_tests(tmp_path / 'repo', [{'tool': 'python3', 'args': ['launch.py']}], timeout=2)
+    assert result['status'] == 'timeout'
+    import time
+    time.sleep(0.5)
+    first = marker.read_text() if marker.exists() else None
+    time.sleep(0.5)
+    assert (marker.read_text() if marker.exists() else None) == first, 'grandchild kept running after timeout'
+
+
+def test_apply_files_rejects_symlinked_parents_and_stale_proposals(tmp_path):
+    from codemri.runner import apply_files
+    work = tmp_path / 'work'
+    (work / 'src').mkdir(parents=True)
+    (work / 'src/a.ts').write_text('old\n')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (work / 'linked').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match='symbolic link'):
+        apply_files(work, [{'path': 'linked/evil.txt', 'after': 'x'}])
+    assert not (outside / 'evil.txt').exists()
+    with pytest.raises(ValueError, match='stale'):
+        apply_files(work, [{'path': 'src/a.ts', 'before': 'something else\n', 'after': 'new\n'}])
+    assert (work / 'src/a.ts').read_text() == 'old\n'
+    apply_files(work, [{'path': 'src/a.ts', 'before': 'old\n', 'after': 'new\n'}, {'path': 'src/b.ts', 'before': None, 'after': 'b\n'}])
+    assert (work / 'src/a.ts').read_text() == 'new\n' and (work / 'src/b.ts').read_text() == 'b\n'
+
+
+def test_scrubbed_env_strips_credentials_but_honours_keep_list(monkeypatch):
+    from codemri.runner import scrubbed_env
+    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'x'); monkeypatch.setenv('SSH_AUTH_SOCK', '/tmp/s'); monkeypatch.setenv('GITHUB_TOKEN', 'x')
+    monkeypatch.setenv('OPENAI_API_KEY', 'x'); monkeypatch.setenv('PATH', '/usr/bin')
+    monkeypatch.setenv('CODEMRI_SUBPROCESS_ENV_KEEP', 'OPENAI_API_KEY')
+    env = scrubbed_env()
+    assert 'AWS_SECRET_ACCESS_KEY' not in env and 'SSH_AUTH_SOCK' not in env and 'GITHUB_TOKEN' not in env
+    assert env['OPENAI_API_KEY'] == 'x' and env['PATH'] == '/usr/bin'

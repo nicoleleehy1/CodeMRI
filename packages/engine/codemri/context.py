@@ -161,21 +161,33 @@ def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
             if role == "direct":
                 shortfall.append({"id": node_id, "name": by_id[node_id].name, "needed": full_cost[node_id], "included": "none"})
     order = {i: k for k, (i, _) in enumerate(ranked)}
-    body = "".join(sections[i] if i in selected else signatures[i] for i, _ in ranked if i in selected or i in supporting)
-    covered = [i for i, _ in ranked if covered_by(i)]
-    excluded = [i for i, _ in ranked if i not in selected and i not in supporting and i not in covered]
-    footer = ""
-    if excluded or shortfall or omissions:
-        footer = f"\n[{len(selected)} full, {len(supporting)} signature-only, {len(excluded)} omitted symbols" + \
-                 (f"; {len(shortfall)} edit target(s) did not fit" if shortfall else "") + "]\n"
-    text = header + body + footer
+
+    def render():
+        covered_now = [i for i, _ in ranked if covered_by(i)]
+        excluded_now = [i for i, _ in ranked if i not in selected and i not in supporting and i not in covered_now]
+        body = "".join(sections[i] if i in selected else signatures[i] for i, _ in ranked if i in selected or i in supporting)
+        footer_now = ""
+        if excluded_now or shortfall or omissions:
+            footer_now = f"\n[{len(selected)} full, {len(supporting)} signature-only, {len(excluded_now)} omitted symbols" + \
+                         (f"; {len(shortfall)} edit target(s) did not fit" if shortfall else "") + "]\n"
+        return covered_now, excluded_now, header + body + footer_now
+
+    covered, excluded, text = render()
     tokens = count(text)
     # Per-section counts are additive up to tokenizer merges across boundaries; trim if the exact total still overflows.
+    # Every trim re-derives coverage, exclusions, shortfall and the footer from what actually remains.
     while tokens > budget and (selected or supporting):
         dropped = (supporting or selected).pop()
-        omissions[dropped] = "Dropped to respect the exact token budget"; excluded.append(dropped)
-        body = "".join(sections[i] if i in selected else signatures[i] for i, _ in ranked if i in selected or i in supporting)
-        text = header + body + footer
+        omissions[dropped] = "Dropped to respect the exact token budget"
+        role = dict(ranked)[dropped]
+        if role == "direct" and not any(x["id"] == dropped for x in shortfall):
+            shortfall.append({"id": dropped, "name": by_id[dropped].name, "needed": full_cost[dropped], "included": "none"})
+        for nested, _ in ranked:
+            if containers.get(nested) == dropped and nested not in selected and nested not in supporting:
+                omissions[nested] = f"Container {by_id[dropped].name} was dropped to respect the exact token budget"
+                if dict(ranked)[nested] == "direct" and not any(x["id"] == nested for x in shortfall):
+                    shortfall.append({"id": nested, "name": by_id[nested].name, "needed": full_cost[nested], "included": "none"})
+        covered, excluded, text = render()
         tokens = count(text)
     excluded.sort(key=lambda i: order[i])
     tiers = {"included": [{"id": i, "name": by_id[i].name, "path": by_id[i].path, "tokens": full_cost[i]} for i in selected],

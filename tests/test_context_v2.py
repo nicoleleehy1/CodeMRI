@@ -62,3 +62,26 @@ def test_nested_target_survives_when_container_is_signature_only(tmp_path):
     assert 'price' in [names[i] for i in result['selected']] or any(s['name'] == 'price' for s in result['shortfall'])
     assert result['covered'] == []
     assert result['tokens'] <= 400
+
+
+def test_exact_budget_trim_recomputes_coverage_and_footer(tmp_path):
+    (tmp_path / 'cart.ts').write_text('export class Cart {\n  total() { return this.price(); }\n  price() { return 3; }\n}\n')
+    graph = analyze(tmp_path)
+    import codemri.context as ctx
+    real = ctx.count
+    # Force the final exact count to overflow so the trim loop must drop the selected container.
+    calls = {'n': 0}
+    def inflated(text):
+        calls['n'] += 1
+        return real(text) + (10_000 if text.startswith(ctx.HEADER) and 'return 3' in text else 0)
+    ctx.count = inflated
+    try:
+        result = ctx.compile_context(graph, 'change Cart price total', 200)
+    finally:
+        ctx.count = real
+    names = {n.id: n.name for n in graph.nodes}
+    assert 'Cart' not in [names[i] for i in result['selected']]
+    assert result['covered'] == [], 'nothing is covered once its container was trimmed'
+    assert all(names[i] in {'Cart', 'price', 'total'} for i in result['excluded'])
+    assert result['text'].count('omitted symbols') == 1 and '0 full' in result['text']
+    assert any(s['name'] == 'Cart' for s in result['shortfall'])
