@@ -235,6 +235,7 @@ def build_layers(root, graph, walk=None):
     graph.revision = digest.hexdigest()[:16]
     graph.warnings.extend(warnings)
     graph.layers = {
+        **graph.layers,
         'architecture': {'nodes':ordered, 'edges':list(edges['architecture'].values())},
         'modules': {'nodes':list(modules.values()), 'edges':list(edges['modules'].values())},
     }

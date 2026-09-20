@@ -2,6 +2,7 @@
 import re
 import tiktoken
 from .models import Graph
+from .tests_graph import impacted_tests
 
 def impact(graph: Graph, query: str, seed_ids: list[str] | None = None):
     words = set(re.findall(r"[a-zA-Z]{3,}", query.lower())) - {"the", "and", "for", "change", "add", "support"}
@@ -17,8 +18,10 @@ def impact(graph: Graph, query: str, seed_ids: list[str] | None = None):
                 reasons[e.source] = f"Calls affected symbol {e.target}"
                 next_nodes.add(e.source)
         frontier = next_nodes
-    return {"mode": "static-prototype", "direct": sorted(seeds), "affected": list(reasons), "reasons": reasons,
-            "limitations": "Lexical seeds and up to 3 reverse call hops; not a proof of runtime impact."}
+    result = {"mode": "static-prototype", "direct": sorted(seeds), "affected": list(reasons), "reasons": reasons,
+              "limitations": "Lexical seeds and up to 3 reverse call hops; not a proof of runtime impact."}
+    result["tests"] = impacted_tests(graph, result)
+    return result
 
 def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
     if not 64 <= budget <= 32000:

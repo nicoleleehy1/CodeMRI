@@ -54,6 +54,15 @@ def impact_analysis(repo_id: str, change: str, seed_ids: list[str] | None = None
     return impact(store.load(repo_id), change, seed_ids)
 
 @mcp.tool()
+def find_tests(repo_id: str, change: str, seed_ids: list[str] | None = None) -> dict:
+    """Tests heuristically associated with a change, each with the link (call, import, naming) that justifies it.
+
+    Symbols listed under no_identified_tests have no discovered link; that does not mean they are untested.
+    Returns run selectors but never executes anything.
+    """
+    return impact(store.load(repo_id), change, seed_ids)["tests"]
+
+@mcp.tool()
 def compile_agent_context(repo_id: str, task: str, budget: int = 4000, seed_ids: list[str] | None = None) -> dict:
     """Compile graph-selected source within a cl100k_base token budget."""
     return compile_context(store.load(repo_id), task, budget, seed_ids)

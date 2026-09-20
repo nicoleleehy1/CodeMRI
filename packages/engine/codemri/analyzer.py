@@ -6,6 +6,7 @@ import tree_sitter_typescript as ts
 from .models import Graph, Symbol, Edge, CallSite, merge_edges
 from .architecture import build_layers
 from .ignore import walk_repository
+from .tests_graph import discover_tests
 from .symbol_details import function_details, declaration_details, function_calls, attach_call_targets, FUNCTIONS, CLASSES
 
 EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
@@ -131,4 +132,4 @@ def analyze(root: Path) -> Graph:
     unique = merge_edges(edges)
     from .java import extend_java
     graph = Graph(root=str(root), revision=digest.hexdigest()[:16], nodes=nodes, edges=unique, warnings=warnings)
-    return build_layers(root, attach_call_targets(extend_java(root, graph, listing)), listing)
+    return build_layers(root, discover_tests(attach_call_targets(extend_java(root, graph, listing))), listing)
