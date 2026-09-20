@@ -146,15 +146,20 @@ The implementation baseline documented here includes:
 - Functions, arrow-function variables, classes, methods, interfaces, and type aliases from TS/TSX/JS/JSX.
 - Relative module import edges and direct identifier calls, including named import aliases.
 - Interactive graph with source navigation, editor selection highlighting, pan/zoom, symbol search, and optional module nodes.
-- Static change-impact prototype: lexical symbol/path seeds plus up to three reverse call hops, with reasons.
-- Context compiler: relevant symbols, callers and direct dependencies packed into a real `cl100k_base` token budget; returns selected/excluded IDs and full-source token counts.
+- Static change-impact prototype: lexical symbol/path seeds expanded along typed edges (reverse `calls` up to three hops by default; `imports` and `contains` opt-in), with a reason per affected symbol, plus heuristically associated tests.
+- Context compiler v2: edit targets and callers as full source, peripheral callees as signatures, nested ranges deduplicated, task/metadata budget reserved, packed into a real `cl100k_base` budget; returns included/supporting/excluded tiers, omission reasons, and an explicit shortfall when an edit target does not fit.
 - SQLite working snapshots and reviewed baselines consumed by the shared engine; HTTP API and MCP read the same store.
 - Baseline symbol/edge comparison, graph change highlighting, and review controls.
 - Isolated Codex coding proposals, whole-file approval/discard, and pending-proposal restoration.
 - Create mode: editable architecture drafts, local validation, read-only Codex assessment, and reviewed implementation proposals.
-- Context-budget slider, copyable context, and selected-symbol highlighting.
+- Context-budget slider, copyable context (text or JSON with tiers and omission reasons), and selected-symbol highlighting.
+- `.gitignore`-aware inventory with virtualenv and secret-file exclusion, secret-shaped string redaction in AI excerpts, and skip diagnostics.
+- Heuristic test discovery (`tests` layer, `tested_by` edges for JUnit, pytest and `node:test`) and impacted-test selection with the justifying link.
+- Explicit, user-confirmed impacted-test execution in a temporary copy (allow-listed tools, timeout, captured output, structured pass/fail/timeout/error/no-tests), optionally against the pending proposal; results are stored and shown with a graph-freshness note. Not exposed over MCP.
+- Coding chat sends a compiled CodeMRI context pack with the task after checking source freshness; approval/discard semantics are unchanged.
+- Reusable loop harness (`python -m codemri.loop`) recording task → impact → context → agent → patch → tests → reanalysis → graph diff per run, and a benchmark runner (`benchmarks/run.py`) that runs baseline and CodeMRI variants through the same agent command. Both are verified with fake agents only; no real agent run is recorded yet.
 
-These capabilities are present in source and have relevant automated tests; this documentation reconciliation is not a fresh test or manual F5 run.
+These capabilities are present in source and have automated tests (`npm run check` clean; 24 Node + 83 Python tests passing on 2026-09-20). The manual F5 checklist below has not been re-run since.
 
 ## API
 
@@ -169,6 +174,8 @@ Open `http://127.0.0.1:8000/docs` for the generated request/response playground.
 | `POST /graphs/{repo_id}/impact` | `{ "query": "change applyCoupon", "seed_ids": [] }` |
 | `POST /graphs/{repo_id}/context` | Same request plus `"budget": 4000` |
 | `GET /graphs/{repo_id}/freshness` | Compare indexed source revision without replacing saved graph |
+| `POST /graphs/{repo_id}/tests/run` | `{ "query": "...", "files": [...], "timeout": 300 }` → runs the impacted tests (or explicit `selection`) in a temporary copy, optionally with proposed files applied; structured per-command results plus `freshness` |
+| `GET /graphs/{repo_id}/tests/runs` | Stored test runs for the repository |
 | `POST /graphs/{repo_id}/architecture-ai` | Explicit AI architecture generation |
 | `POST /graphs/{repo_id}/review` | `{ "revision": "..." }` → advance reviewed baseline |
 | `POST /preview` | `{ "root": "...", "files": [{ "path": "...", "before": "...", "after": "..." }] }` → isolated proposal graph preview; null before/after represents addition/deletion |
@@ -195,7 +202,7 @@ Launch with `.venv/bin/python -m services.mcp.server` from the monorepo root. Ex
 }
 ```
 
-Available tools: `analyze_repository`, `get_architecture`, `get_symbol`, `find_callers`, `find_callees`, `impact_analysis`, `compile_agent_context`. First analyze a repository, then use the returned `repo_id`. Stdout is reserved for the MCP protocol. These tools read code; they do not execute repository code or apply patches.
+Available tools: `analyze_repository`, `get_architecture` (`compact=True` omits source bodies), `get_symbol` (clear error for unknown IDs), `find_callers`, `find_callees`, `impact_analysis`, `find_tests`, `compile_agent_context`. First analyze a repository, then use the returned `repo_id`. Stdout is reserved for the MCP protocol. These tools read code; they do not execute repository code, run tests, or apply patches. Test execution is only available through the API/extension after an explicit user action.
 
 ## Validation
 
@@ -207,7 +214,7 @@ npm run build
 npm test
 ```
 
-Tests cover the demo call chain, import aliases, reverse impact, token budgets, persistence, TSX and UTF-16 positions, ignored dependencies, content revisions, parse diagnostics, the API round trip, a real MCP stdio handshake/tool call, the extension navigation message bridge (mocked VS Code host), architecture drilldown membership, a Python-only repo, configuration revision changes, and evidence-backed edge types. The F5 demo remains the manual acceptance check for VS Code focus and navigation.
+Tests cover the demo call chain, import aliases, reverse and typed-edge impact, token budgets and compiler v2 tiers/shortfall, persistence, TSX and UTF-16 positions, ignored dependencies and `.gitignore`/secret exclusion, content revisions, parse diagnostics, the API round trip and API/MCP parity, a real MCP stdio handshake/tool call, test discovery and impacted-test selection, the isolated test runner (including faithful failure and timeout reporting), the loop and benchmark harnesses with a fake agent, the retrieval evaluation script, the extension navigation/test/context message bridge (mocked VS Code host), architecture drilldown membership, a Python-only repo, configuration revision changes, and evidence-backed edge types. The F5 demo remains the manual acceptance check for VS Code focus and navigation.
 
 ## HackMIT demo checklist
 
@@ -225,16 +232,16 @@ Tests cover the demo call chain, import aliases, reverse impact, token budgets, 
 
 ## Current limitations and next steps
 
-This is the foundation of the persistent semantic world model, not yet a complete semantic execution graph. Tree-sitter gives syntax, not type resolution. Direct identifier resolution is a prototype: lexical shadowing, re-exports, default/namespace imports, tsconfig aliases, dynamic dispatch, callbacks and framework-specific routes are not resolved reliably. Member calls are deliberately reported as unresolved. Files over 1 MB, symlinks, dependency/build folders are skipped; `.gitignore` is not yet interpreted. Large repositories need incremental indexing, limits and graph virtualization.
+This is the foundation of the persistent semantic world model, not yet a complete semantic execution graph. Tree-sitter gives syntax, not type resolution. Direct identifier resolution is a prototype: lexical shadowing, re-exports, default/namespace imports, tsconfig aliases, dynamic dispatch, callbacks and framework-specific routes are not resolved reliably. Member calls are deliberately reported as unresolved. Files over 1 MB, symlinks, dependency/build folders, `.gitignore`d paths, virtualenvs and secret-looking files are skipped and counted in diagnostics. Large repositories need incremental indexing, limits and graph virtualization.
 
-Impact is heuristic, not a guarantee that a change is safe. Context retrieval uses lexical matching and greedy whole-symbol packing; it does not prove dependency completeness. The budget covers the emitted text with `cl100k_base`, excluding any additional agent message wrappers. Other model tokenizers may differ. Snapshots can go stale; disk contents are the source of truth and unsaved edits are not indexed.
+Impact is heuristic, not a guarantee that a change is safe. Context retrieval uses lexical seeds and greedy tiered packing (full source, then signatures); it does not prove dependency completeness. `benchmarks/retrieval_eval.py` scores it against hand-labeled tasks (first reading at a 4,000-token budget: recall 1.0, precision 0.60 over six fixture tasks, so over-inclusion is the current weakness). The budget covers the emitted text with `cl100k_base`, excluding any additional agent message wrappers. Other model tokenizers may differ. Snapshots can go stale; disk contents are the source of truth and unsaved edits are not indexed.
 
 Stretch roadmap, in order:
 
 1. Full Java type/overload resolution, TypeScript language-service resolution, incremental indexing and stable symbol identities.
 2. Semantic summaries/embeddings and task-aware ranking with retrieval benchmarks.
 3. Arbitrary historical snapshot comparison and PR mode; working-versus-reviewed symbol/edge comparison already exists.
-4. Test discovery, impacted-test selection, and an explicit agent patch → test → graph-refresh loop.
+4. A recorded real run of the agent patch → test → graph-refresh loop (the harness exists; the recorded run does not), then benchmark runs and the results table.
 5. Git history and provenance, execution traces, route/data relationships.
 
 Implementation references: [Tree-sitter Python bindings](https://github.com/tree-sitter/py-tree-sitter), [VS Code webview API](https://code.visualstudio.com/api/extension-guides/webview), [MCP Python SDK](https://py.sdk.modelcontextprotocol.io/).
@@ -418,7 +425,7 @@ Task → impact → compile_agent_context → compatible agent
   → review patch → run tests → explicitly reanalyze → graph diff
 ```
 
-Copying a context pack and local Codex coding proposals are implemented, including manual whole-file application, proposal graph previews, and reviewed-baseline comparisons. Coding chat currently passes task/chat text, not the compiled context pack. Remaining work connects impact/context to execution, adds a structured isolated test runner and result capture, and records the complete loop. The CLI can execute commands, but that alone is not test discovery or structured verification. Devin and Warp integrations remain unverified.
+Copying a context pack and local Codex coding proposals are implemented, including manual whole-file application, proposal graph previews, and reviewed-baseline comparisons. Coding chat now sends the compiled context pack with the task, the isolated test runner captures structured results against the pending proposal, and `codemri.loop` records the complete loop. What remains is a recorded real run of that loop (fake-agent tests only so far). Devin and Warp integrations remain unverified.
 
 If the client provides activity events, show which symbols the agent reads/edits and which tests run. “Why this context?” should explain retrieval evidence, not expose or invent hidden model reasoning. Keep code-reading tools separate from authorized execution and patch actions.
 
@@ -562,7 +569,13 @@ speedup = baseline_elapsed / codemri_elapsed
 
 Do not calculate a ratio with a zero denominator. Token reduction and dollar savings are distinct because output, cached tokens, and model rates may differ.
 
+### Harness
+
+`benchmarks/run.py --task benchmarks/tasks/<task>.json --agent <command…>` runs the task through both variants with the same agent command, model/tools and timeouts, pins the fixture revision, and appends raw rows (usage, preprocessing/agent/test/total timings, artifact paths) to `benchmarks/results.jsonl` with full artifacts under `benchmarks/runs/`. Both files are git-ignored; nothing in this README is filled from them yet. See `benchmarks/README.md`. The retrieval-quality row is produced by `benchmarks/retrieval_eval.py`.
+
 ### Results template
+
+No measured results exist yet: the harness has only been exercised with a fake agent in tests. Fill this table from `benchmarks/results.jsonl` after real runs, never by hand.
 
 | Task | Variant | Input tokens | Output tokens | Tool calls | Time | Tests | Review |
 |---|---|---:|---:|---:|---:|---|---|
