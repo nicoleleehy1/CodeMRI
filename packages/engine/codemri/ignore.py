@@ -9,6 +9,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 import os
 import re
+import subprocess
 
 SKIP_DIRS = {'node_modules', '.git', '.hg', '.svn', '.venv', 'venv', 'dist', 'build', 'coverage', '.next', '.codemri',
              '.codemri-preview', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'target', 'vendor', '.tox', '.idea'}
@@ -105,10 +106,18 @@ class Walk:
 
 
 class Ignorer:
+    """Answers "is this path gitignored?" for a repository.
+
+    Inside a git checkout the answer comes from git itself, so tracked files stay visible even when a
+    broad pattern (say `src`) would match them, exactly as `git status` behaves. Outside git (or when
+    git is unavailable) the `.gitignore` files are parsed directly and applied to every path.
+    """
     def __init__(self, root: Path):
         self.root = root
         self.rules: list[Rule] = []
-        self.load(root, '')
+        self.git_ignored: set[str] | None = git_ignored_paths(root)
+        if self.git_ignored is None:
+            self.load(root, '')
 
     def load(self, directory: Path, base: str):
         gitignore = directory / '.gitignore'
@@ -119,6 +128,8 @@ class Ignorer:
                 pass
 
     def ignored(self, relative: str, is_dir: bool) -> bool:
+        if self.git_ignored is not None:
+            return relative in self.git_ignored or any(relative.startswith(p + '/') for p in self.git_ignored)
         result = False
         for rule in self.rules:
             if rule.matches(relative, is_dir):
@@ -130,6 +141,19 @@ class Ignorer:
         return result
 
 
+def git_ignored_paths(root: Path) -> set[str] | None:
+    """Untracked, ignored paths as git reports them (directories without trailing slash), or None when
+    `root` is not a git work tree or git cannot run. Never touches the index."""
+    if not (root / '.git').exists():
+        return None
+    try:
+        out = subprocess.run(['git', '-C', str(root), 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+                             capture_output=True, timeout=30, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {p.decode('utf-8', errors='replace').rstrip('/') for p in out.stdout.split(b'\0') if p}
+
+
 def walk_repository(root: Path) -> Walk:
     """Files under `root` that analysis may read, in sorted order, with skip diagnostics."""
     root = Path(root).resolve()
@@ -138,7 +162,7 @@ def walk_repository(root: Path) -> Walk:
     for directory, dirs, names in os.walk(root, followlinks=False):
         here = Path(directory)
         base = here.relative_to(root).as_posix() if here != root else ''
-        if base:
+        if base and ignorer.git_ignored is None:
             ignorer.load(here, base)
         kept = []
         for d in sorted(dirs):

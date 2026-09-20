@@ -44,7 +44,7 @@ def test_walk_honours_gitignore_secret_files_and_virtualenvs(tmp_path):
 
 def test_gitignore_semantics():
     rules = parse_gitignore('# comment\n\n*.log\n!important.log\nbuild/\n/root-only.txt\ndocs/**/*.md\n**/deep\n', '')
-    ig = Ignorer.__new__(Ignorer); ig.rules = rules
+    ig = Ignorer.__new__(Ignorer); ig.rules = rules; ig.git_ignored = None
     assert ig.ignored('a/b/c.log', False) and not ig.ignored('a/important.log', False)
     assert ig.ignored('build', True) and not ig.ignored('build', False)
     assert ig.ignored('root-only.txt', False) and not ig.ignored('sub/root-only.txt', False)
@@ -89,3 +89,18 @@ def test_secret_shaped_strings_are_redacted_in_ai_excerpts_but_code_is_kept():
 def test_secret_file_patterns():
     assert all(is_secret_file(n) for n in ['.env', '.env.local', 'id_rsa', 'id_rsa.pub', 'server.key', 'cert.pem', 'gcp-credentials.json', '.npmrc'])
     assert not any(is_secret_file(n) for n in ['.env.example', 'main.py', 'keys.ts', 'environment.ts'])
+
+
+def test_git_checkout_keeps_tracked_files_matching_ignore_rules(tmp_path):
+    import subprocess
+    root = tmp_path / 'repo'; root.mkdir()
+    (root / 'src').mkdir(); (root / 'src/main.ts').write_text('export const A = 1;\n')
+    (root / '.gitignore').write_text('src\n*.log\n')
+    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+    subprocess.run(['git', 'add', '.gitignore', '-f', 'src/main.ts'], cwd=root, check=True)
+    (root / 'src/new.ts').write_text('export const B = 2;\n')
+    (root / 'out.log').write_text('x')
+    walk = walk_repository(root)
+    assert 'src/main.ts' in walk.files and 'src/new.ts' not in walk.files and 'out.log' not in walk.files
+    assert set(walk.skipped['gitignored']) == {'src/new.ts', 'out.log'}
+    assert {n.name for n in analyze(root).nodes} >= {'A'} and 'B' not in {n.name for n in analyze(root).nodes}
