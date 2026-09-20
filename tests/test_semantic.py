@@ -247,3 +247,15 @@ def test_invalid_json_is_retried_and_last_run_is_logged_without_the_key(monkeypa
     data=json.loads(log)
     assert data['model']=='test-model' and len(data['attempts'])==2 and 'not valid JSON' in data['attempts'][0]['issues'][0]
     assert data['attempts'][1]['accepted_edges'][0]['evidence'][0]['line']==2 and 'fake-key' not in log
+
+
+def test_ungrouped_actor_with_empty_group_is_accepted_without_retry(monkeypatch,tmp_path):
+    value=valid_output()
+    value['nodes'].append({'id':'client','name':'HTTP client','group':'','path':None,'shape':'circle','summary':'Initiating actor'})
+    value['edges'].append({'source':'client','target':'api','kind':'CALLS','label':'requests','evidence':[cites(ROUTES,2,'store.read()')]})
+    calls=scripted_provider(monkeypatch,[value])
+    layer=synthesize(analyze(repo(tmp_path))).layers['architecture']
+    assert len(calls)==1 and layer['attempts']==1
+    client=next(n for n in layer['nodes'] if n['id']=='client')
+    assert client['group']=='' and client['kind']=='external'
+    assert ('client','api') in {(e['source'],e['target']) for e in layer['edges']}

@@ -125,7 +125,8 @@ def repair_architecture(value, files):
     ids=[n.id for n in result.nodes]
     groups=[g.id for g in result.groups]
     issues=[f'Duplicate {label} id "{dup}".' for label,values in (('node',ids),('group',groups)) for dup in sorted({v for v in values if values.count(v)>1})]
-    issues+=[f'Node "{n.id}" uses unknown group "{n.group}"; groups are {groups}.' for n in result.nodes if n.group not in groups]
+    # An empty group means an ungrouped actor (the prompt asks for that); the renderer has a fallback group.
+    issues+=[f'Node "{n.id}" uses unknown group "{n.group}"; groups are {groups}.' for n in result.nodes if n.group and n.group not in groups]
     if issues:
         return None,issues,[]
     repairs=[]
@@ -164,7 +165,7 @@ def validate_architecture(value, files):
     if len(set(ids))!=len(ids) or len(set(groups))!=len(groups):
         raise ValueError('Generated graph has duplicate identifiers')
     for n in result.nodes:
-        if n.group not in groups or (n.path is not None and not known_path(n.path, files)):
+        if (n.group and n.group not in groups) or (n.path is not None and not known_path(n.path, files)):
             raise ValueError('Generated graph references an unknown group or source path')
     for edge in result.edges:
         if edge.source not in ids or edge.target not in ids:
