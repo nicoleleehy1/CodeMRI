@@ -120,15 +120,20 @@ def run_loop(root, task: str, agent: list[str] | None, out=None, variant: str = 
     baseline = analyze(root)
     lap('analyze')
     impact_result = impact(baseline, task, seed_ids)
-    pack = compile_context(baseline, task, budget, seed_ids)
+    lap('impact')
+    # Context compilation is CodeMRI-only work: the baseline variant never pays for it.
+    pack = compile_context(baseline, task, budget, seed_ids) if variant == 'codemri' else None
     lap('compile_context')
     prompt = build_prompt(task, variant, pack)
+    context = ({k: pack[k] for k in ('selected', 'excluded', 'tokens', 'budget', 'tokenizer', 'repository_tokens')} | {'included_in_prompt': True}
+               if pack else {'selected': [], 'excluded': [], 'tokens': 0, 'budget': budget, 'tokenizer': None, 'repository_tokens': None,
+                             'included_in_prompt': False, 'note': 'Baseline variant: no context compiled.'})
     record = {
         'schema': 'codemri.loop/1', 'recorded': False, 'variant': variant, 'task': task, 'root': str(root),
         'revision': baseline.revision, 'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         'impact': {'direct': impact_result['direct'], 'affected': impact_result['affected'],
                    'tests': impact_result['tests']['tests'], 'no_identified_tests': impact_result['tests']['no_identified_tests']},
-        'context': {k: pack[k] for k in ('selected', 'excluded', 'tokens', 'budget', 'tokenizer', 'repository_tokens')} | {'included_in_prompt': variant == 'codemri'},
+        'context': context,
         'prompt': prompt,
     }
     work = copy_repository(root)

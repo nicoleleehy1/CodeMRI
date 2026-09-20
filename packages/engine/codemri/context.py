@@ -91,8 +91,10 @@ def rank_candidates(graph: Graph, result: dict) -> list[tuple[str, str]]:
 
 
 def dedupe_ranges(ranked, by_id) -> tuple[list, dict]:
-    """Drop symbols whose source range lies inside another candidate from the same file (e.g. a method inside its class)."""
-    kept, omissions, containers = [], {}, {}
+    """Map each candidate to the candidate whose source range encloses it in the same file (a method inside its
+    class). Nothing is dropped here: a nested symbol is only skipped at packing time once its container has
+    actually been selected with full source, so a container downgraded to a signature never hides an edit target."""
+    kept, containers = [], {}
     spans = [(by_id[i].path, by_id[i].start_line, by_id[i].end_line, i) for i, _ in ranked if i in by_id]
     for node_id, role in ranked:
         n = by_id.get(node_id)
@@ -101,11 +103,9 @@ def dedupe_ranges(ranked, by_id) -> tuple[list, dict]:
         container = next((o for p, s, e, o in spans if o != node_id and p == n.path and s <= n.start_line and e >= n.end_line
                           and (e - s) > (n.end_line - n.start_line)), None)
         if container and by_id[container].kind != "module":
-            omissions[node_id] = f"Source already included inside {by_id[container].name} ({n.path}:{by_id[container].start_line}-{by_id[container].end_line})"
             containers[node_id] = container
-            continue
         kept.append((node_id, role))
-    return kept, omissions, containers
+    return kept, {}, containers
 
 
 def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
@@ -132,9 +132,24 @@ def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
     full_cost = {i: count(s) for i, s in sections.items()}
     sig_cost = {i: count(s) for i, s in signatures.items()}
     used, selected, supporting, shortfall = 0, [], [], []
+    def covered_by(node_id):
+        c = containers.get(node_id)
+        return c if c in selected else None
     for node_id, role in ranked:
+        n = by_id[node_id]
+        if covered_by(node_id):
+            c = by_id[covered_by(node_id)]
+            omissions[node_id] = f"Source already included inside {c.name} ({n.path}:{c.start_line}-{c.end_line})"
+            continue
         if role != "peripheral" and used + full_cost[node_id] <= available:
             selected.append(node_id); used += full_cost[node_id]
+            for nested in [i for i in selected if containers.get(i) == node_id]:
+                selected.remove(nested); used -= full_cost[nested]
+                omissions[nested] = f"Source already included inside {n.name} ({n.path}:{n.start_line}-{n.end_line})"
+            for nested in [i for i in supporting if containers.get(i) == node_id]:
+                supporting.remove(nested); used -= sig_cost[nested]
+                omissions[nested] = f"Source already included inside {n.name} ({n.path}:{n.start_line}-{n.end_line})"
+                shortfall[:] = [x for x in shortfall if x["id"] != nested]
         elif used + sig_cost[node_id] <= available:
             supporting.append(node_id); used += sig_cost[node_id]
             omissions[node_id] = ("Peripheral callee: signature only" if role == "peripheral"
@@ -147,7 +162,8 @@ def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
                 shortfall.append({"id": node_id, "name": by_id[node_id].name, "needed": full_cost[node_id], "included": "none"})
     order = {i: k for k, (i, _) in enumerate(ranked)}
     body = "".join(sections[i] if i in selected else signatures[i] for i, _ in ranked if i in selected or i in supporting)
-    excluded = [i for i, _ in ranked if i not in selected and i not in supporting]
+    covered = [i for i, _ in ranked if covered_by(i)]
+    excluded = [i for i, _ in ranked if i not in selected and i not in supporting and i not in covered]
     footer = ""
     if excluded or shortfall or omissions:
         footer = f"\n[{len(selected)} full, {len(supporting)} signature-only, {len(excluded)} omitted symbols" + \
@@ -165,7 +181,6 @@ def compile_context(graph: Graph, query: str, budget: int, seed_ids=None):
     tiers = {"included": [{"id": i, "name": by_id[i].name, "path": by_id[i].path, "tokens": full_cost[i]} for i in selected],
              "supporting": [{"id": i, "name": by_id[i].name, "path": by_id[i].path, "tokens": sig_cost[i]} for i in supporting],
              "excluded": [{"id": i, "name": by_id[i].name, "path": by_id[i].path, "tokens": full_cost.get(i, 0), "reason": omissions.get(i, "")} for i in excluded]}
-    covered = [i for i, c in containers.items() if c in selected]
     return {"text": text, "selected": selected, "supporting": supporting, "excluded": excluded, "covered": covered, "tiers": tiers,
             "omissions": omissions, "shortfall": shortfall,
             "tokens": tokens, "budget": budget, "reserved": {"task": header_tokens, "metadata": reserved_metadata},

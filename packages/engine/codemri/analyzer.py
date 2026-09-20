@@ -132,4 +132,4 @@ def analyze(root: Path) -> Graph:
     unique = merge_edges(edges)
     from .java import extend_java
     graph = Graph(root=str(root), revision=digest.hexdigest()[:16], nodes=nodes, edges=unique, warnings=warnings)
-    return build_layers(root, discover_tests(attach_call_targets(extend_java(root, graph, listing))), listing)
+    return build_layers(root, discover_tests(attach_call_targets(extend_java(root, graph, listing)), listing), listing)

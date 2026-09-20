@@ -12,7 +12,7 @@ import re
 import subprocess
 
 SKIP_DIRS = {'node_modules', '.git', '.hg', '.svn', '.venv', 'venv', 'dist', 'build', 'coverage', '.next', '.codemri',
-             '.codemri-preview', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'target', 'vendor', '.tox', '.idea'}
+             '.codemri-preview', '.codemri-copy', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'target', 'vendor', '.tox', '.idea'}
 SECRET_FILES = ('.env', '.env.*', '*.pem', '*.key', '*.p12', '*.pfx', '*.jks', '*.keystore', 'id_rsa*', 'id_ed25519*', 'id_ecdsa*',
                 '*.secret', '*.secrets', 'secrets.*', 'credentials', 'credentials.*', '*credentials.json', 'service-account*.json',
                 '.npmrc', '.pypirc', '.netrc', '.htpasswd', '*.tfvars', '.aws', '.docker/config.json')
@@ -117,6 +117,8 @@ class Ignorer:
         self.rules: list[Rule] = []
         self.git_ignored: set[str] | None = git_ignored_paths(root)
         if self.git_ignored is None:
+            self.git_ignored = copied_ignored_paths(root)
+        if self.git_ignored is None:
             self.load(root, '')
 
     def load(self, directory: Path, base: str):
@@ -152,6 +154,31 @@ def git_ignored_paths(root: Path) -> set[str] | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return {p.decode('utf-8', errors='replace').rstrip('/') for p in out.stdout.split(b'\0') if p}
+
+
+COPY_MARKER = Path('.codemri-copy') / 'git-ignored.txt'
+
+
+def write_copy_marker(source_root: Path, copy_root: Path) -> bool:
+    """Record git's ignored-path answer for `source_root` inside a `.git`-less copy so the copy keeps the
+    checkout's ignore semantics (tracked files matching `.gitignore` stay visible). Returns False outside git."""
+    ignored = git_ignored_paths(Path(source_root))
+    if ignored is None:
+        return False
+    marker = Path(copy_root) / COPY_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text('\n'.join(sorted(ignored)), encoding='utf-8')
+    return True
+
+
+def copied_ignored_paths(root: Path) -> set[str] | None:
+    marker = root / COPY_MARKER
+    if not marker.is_file():
+        return None
+    try:
+        return {line for line in marker.read_text(encoding='utf-8').splitlines() if line}
+    except OSError:
+        return None
 
 
 def walk_repository(root: Path) -> Walk:

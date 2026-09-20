@@ -137,6 +137,30 @@ class TestRunRequest(BaseModel):
     timeout: int = Field(default=300, ge=5, le=3600)
 
 
+def known_selectors(graph, selection: list[dict]) -> list[dict]:
+    """Explicit selectors are accepted only when they are exactly the commands CodeMRI itself derived for a test
+    in this graph. Caller-supplied argument lists are never executed, so the endpoint cannot be used to run
+    arbitrary code through the allow-listed tools."""
+    from codemri.tests_graph import selector_for
+    from codemri.models import Symbol
+    layer = graph.layers.get('tests') or {}
+    by_id = {n.id: n for n in graph.nodes}
+    allowed = {}
+    for path, framework in layer.get('frameworks', {}).items():
+        for test in layer.get('tests', {}).get(path, [path]):
+            node = by_id.get(test) or Symbol(id=test, name=test, kind='module', path=path, start_line=1, end_line=1)
+            sel = selector_for(framework, node, graph.root)
+            allowed[(sel['tool'], tuple(sel['args']))] = {'test_id': test, 'name': node.name, 'path': path, 'selector': sel}
+    chosen = []
+    for item in selection:
+        sel = item.get('selector', item)
+        key = (sel.get('tool'), tuple(sel.get('args', [])) if isinstance(sel.get('args', []), list) else None)
+        if key not in allowed:
+            raise HTTPException(400, f'Unknown test selector {sel!r}; only selectors returned by impact/find_tests for this graph can be run')
+        chosen.append(allowed[key])
+    return chosen
+
+
 @app.post('/graphs/{repo_id}/tests/run')
 def run_selected_tests(repo_id: str, request: TestRunRequest):
     from codemri.runner import run_tests
@@ -147,7 +171,7 @@ def run_selected_tests(repo_id: str, request: TestRunRequest):
             raise HTTPException(400, 'Provide a change description, seed_ids, or an explicit selection')
         selection = impact(graph, request.query or '', request.seed_ids)['tests']['tests']
     else:
-        selection = request.selection
+        selection = known_selectors(graph, request.selection)
     try:
         result = run_tests(root, selection, [f.model_dump() for f in request.files], request.timeout)
     except (ValueError, OSError) as exc:

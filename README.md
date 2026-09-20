@@ -154,7 +154,7 @@ The implementation baseline documented here includes:
 - Create mode: editable architecture drafts, local validation, read-only Codex assessment, and reviewed implementation proposals.
 - Context-budget slider, copyable context (text or JSON with tiers and omission reasons), and selected-symbol highlighting.
 - `.gitignore`-aware inventory with virtualenv and secret-file exclusion, secret-shaped string redaction in AI excerpts, and skip diagnostics.
-- Heuristic test discovery (`tests` layer, `tested_by` edges for JUnit, pytest and `node:test`) and impacted-test selection with the justifying link.
+- Heuristic test discovery (`tests` layer, `tested_by` edges for JUnit and `node:test`; pytest files are linked file-to-file by name/import because Python symbols are not extracted) and impacted-test selection with the justifying link. Explicit selectors passed to the run endpoint must be ones CodeMRI derived for that graph.
 - Explicit, user-confirmed impacted-test execution in a temporary copy (allow-listed tools, timeout, captured output, structured pass/fail/timeout/error/no-tests), optionally against the pending proposal; results are stored and shown with a graph-freshness note. Not exposed over MCP.
 - Coding chat sends a compiled CodeMRI context pack with the task after checking source freshness; approval/discard semantics are unchanged.
 - Reusable loop harness (`python -m codemri.loop`) recording task → impact → context → agent → patch → tests → reanalysis → graph diff per run, and a benchmark runner (`benchmarks/run.py`) that runs baseline and CodeMRI variants through the same agent command. Both are verified with fake agents only; no real agent run is recorded yet.

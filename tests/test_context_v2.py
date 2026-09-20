@@ -50,3 +50,15 @@ def test_signature_fallback_uses_first_line():
     graph = analyze(SHOP)
     node = next(n for n in graph.nodes if n.name == 'applyCoupon')
     assert signature_of(node) == 'function applyCoupon(total: number, discount: number): number'
+
+
+def test_nested_target_survives_when_container_is_signature_only(tmp_path):
+    body = ''.join(f'  m{i}() {{ return {i} + this.price(); }}\n' for i in range(60))
+    (tmp_path / 'cart.ts').write_text('export class Cart {\n' + body + '  price() { return 3; }\n}\n')
+    graph = analyze(tmp_path)
+    result = compile_context(graph, 'change Cart price', 400)
+    names = {n.id: n.name for n in graph.nodes}
+    assert 'Cart' not in [names[i] for i in result['selected']]
+    assert 'price' in [names[i] for i in result['selected']] or any(s['name'] == 'price' for s in result['shortfall'])
+    assert result['covered'] == []
+    assert result['tokens'] <= 400

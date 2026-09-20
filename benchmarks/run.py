@@ -45,7 +45,7 @@ def results_row(task: dict, record: dict, repeat_index: int, out: Path, agent: l
         'tests': o['tests'], 'tests_passed': o['tests_passed'], 'tests_failed': o['tests_failed'],
         'files_changed': o['files_changed'], 'graph_nodes_changed': o['graph_nodes_changed'], 'graph_edges_changed': o['graph_edges_changed'],
         'context_tokens': o['prompt_tokens_context'], 'agent_usage_raw': usage, 'agent_tokens': tokens,
-        'preprocessing_ms': record['timings_ms']['analyze'] + record['timings_ms']['compile_context'],
+        'preprocessing_ms': record['timings_ms']['analyze'] + record['timings_ms']['impact'] + record['timings_ms']['compile_context'],
         'agent_ms': record['timings_ms']['agent'], 'tests_ms': record['timings_ms']['tests'], 'total_ms': record['timings_ms']['total'],
         'artifacts': str(out.relative_to(ROOT)) if out.is_relative_to(ROOT) else str(out), 'started': record['started'],
     }

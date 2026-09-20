@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from codemri.analyzer import analyze
 from codemri.context import impact
-from codemri.runner import run_tests, merge_junit, parse_commands, summarize, Command
+from codemri.runner import run_tests, merge_junit, parse_commands, summarize, aggregate_status, Command
 from codemri.store import Store
 from services.api import main
 
@@ -79,3 +79,26 @@ def test_api_runs_impacted_shop_tests_and_stores_results(tmp_path, monkeypatch):
     runs = client.get(f'/graphs/{repo_id}/tests/runs').json()
     assert [r['status'] for r in runs] == ['passed', 'failed', 'passed'] and runs[0]['revision'] == run['revision']
     assert client.post(f'/graphs/{repo_id}/tests/run', json={'selection': [{'tool': 'sh', 'args': ['-c', 'true']}]}).status_code == 400
+
+
+def test_aggregate_status_precedence():
+    assert aggregate_status(['passed', 'no_tests']) == 'passed'
+    assert aggregate_status(['no_tests', 'no_tests']) == 'no_tests'
+    assert aggregate_status(['passed', 'error']) == 'error'
+    assert aggregate_status(['failed', 'timeout', 'passed']) == 'timeout'
+    assert aggregate_status(['failed', 'passed']) == 'failed'
+    assert aggregate_status([]) == 'no_tests'
+
+
+def test_api_only_runs_selectors_codemri_derived(tmp_path, monkeypatch):
+    (tmp_path / 'repo').mkdir()
+    (tmp_path / 'repo/math.js').write_text('module.exports = { add: (a, b) => a + b };\n')
+    (tmp_path / 'repo/math.test.js').write_text("const test = require('node:test'); const assert = require('node:assert');\nconst { add } = require('./math');\ntest('add', () => assert.equal(add(1, 2), 3));\n")
+    monkeypatch.setattr(main, 'store', Store(tmp_path / 'cache'))
+    monkeypatch.setenv('CODEMRI_ALLOWED_ROOT', str(tmp_path))
+    client = TestClient(main.app)
+    repo_id = client.post('/analyze', json={'root': str(tmp_path / 'repo')}).json()['repo_id']
+    evil = client.post(f'/graphs/{repo_id}/tests/run', json={'selection': [{'tool': 'node', 'args': ['-e', 'process.exit(0)']}]})
+    assert evil.status_code == 400 and 'Unknown test selector' in evil.text
+    ok = client.post(f'/graphs/{repo_id}/tests/run', json={'selection': [{'tool': 'node', 'args': ['--test', 'math.test.js']}], 'timeout': 60}).json()
+    assert ok['status'] == 'passed' and ok['selection'][0]['path'] == 'math.test.js'

@@ -79,3 +79,15 @@ def test_memmunkdb_junit_links_and_selection():
 
     unrelated = next(n.id for n in graph.nodes if n.kind == 'class_declaration' and n.name == 'RestServer')
     assert impact(graph, 'change rest server', seed_ids=[unrelated])['tests']['tests'] == []
+
+
+def test_pytest_files_are_discovered_without_python_symbol_nodes(tmp_path):
+    (tmp_path / 'calc.py').write_text('def add(a, b):\n    return a + b\n')
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests/test_calc.py').write_text('from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n')
+    graph = analyze(tmp_path)
+    layer = graph.layers['tests']
+    assert layer['frameworks'] == {'tests/test_calc.py': 'pytest'} and layer['files'] == ['tests/test_calc.py']
+    assert [(l['symbol'], l['test']) for l in layer['links']] == [('calc.py', 'tests/test_calc.py')]
+    assert layer['links'][0]['via'] in {'name', 'import'}
+    assert not graph.nodes, 'file-level discovery must not invent Python symbol nodes'

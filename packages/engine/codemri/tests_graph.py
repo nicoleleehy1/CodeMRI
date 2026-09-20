@@ -7,7 +7,7 @@ heuristics can miss tests, so this is never evidence that something is untested.
 """
 import re
 from pathlib import Path
-from .models import Graph, Edge
+from .models import Graph, Edge, Symbol
 
 TEST_PATH = re.compile(r'(^|/)(tests?|__tests__|spec)(/|$)')
 JAVA_TEST_FILE = re.compile(r'(Test|Tests|IT)\.java$')
@@ -40,8 +40,11 @@ def subject_names(path: str) -> set[str]:
     return {stem, stem.lower()} - {''}
 
 
-def discover_tests(graph: Graph) -> Graph:
-    """Add `tested_by` edges and a `tests` layer to `graph`. Idempotent for a graph that has none yet."""
+def discover_tests(graph: Graph, listing=None) -> Graph:
+    """Add `tested_by` edges and a `tests` layer to `graph`. Idempotent for a graph that has none yet.
+
+    `listing` (a `Walk`) lets file-level frameworks be found for files that have no graph nodes: Python files
+    are inventoried but not symbol-extracted, so pytest files are recorded by path and linked by naming convention."""
     by_id = {n.id: n for n in graph.nodes}
     modules = {n.path: n for n in graph.nodes if n.kind == 'module'}
     test_modules = {}
@@ -49,6 +52,10 @@ def discover_tests(graph: Graph) -> Graph:
         framework = framework_of(path, module.source)
         if framework:
             test_modules[path] = framework
+    inventoried_py = [f for f in (listing.files if listing else []) if f.endswith('.py')]
+    for path in inventoried_py:
+        if path not in modules and framework_of(path, ''):
+            test_modules[path] = 'pytest'
     if not test_modules:
         graph.layers['tests'] = {'frameworks': {}, 'files': [], 'tests': {}, 'links': [], 'limitations': LIMITATIONS}
         return graph
@@ -71,9 +78,14 @@ def discover_tests(graph: Graph) -> Graph:
                 and node.name not in JAVA_TEST_METHOD_SKIP
         return False
 
-    links = {}  # (symbol, test) -> {via, evidence}
+    file_only = {p for p in test_modules if p not in by_id}  # pytest files without graph nodes
+    links = {}  # (symbol, test) -> {via, evidence}; for Python, `symbol` may be a production file path
     def link(symbol, test, via, evidence):
-        if symbol in by_id and test in by_id and symbol != test and by_id[symbol].path not in test_modules:
+        if test not in by_id and test not in file_only:
+            return
+        if symbol in by_id and symbol != test and by_id[symbol].path not in test_modules:
+            links.setdefault((symbol, test), {'via': via, 'evidence': evidence})
+        elif symbol in inventoried_py and symbol not in test_modules:
             links.setdefault((symbol, test), {'via': via, 'evidence': evidence})
 
     # Test functions per file: JUnit methods with @Test; for node:test the module itself stands in,
@@ -82,6 +94,23 @@ def discover_tests(graph: Graph) -> Graph:
     for path, framework in test_modules.items():
         found = [sid for sid in symbols_in(path) if is_test_symbol(by_id[sid], framework)]
         test_symbols[path] = found or [path]
+    # Python: no symbols, so a test file is linked to the production .py files its name or imports point at.
+    for path in file_only:
+        wanted = subject_names(path)
+        try:
+            text = Path(graph.root, path).read_text(errors='replace')
+        except OSError:
+            text = ''
+        for candidate in inventoried_py:
+            if candidate in test_modules:
+                continue
+            stem = Path(candidate).stem
+            if stem in wanted or stem.lower() in wanted:
+                link(candidate, path, 'name', Path(path).name)
+            module_name = candidate[:-3].replace('/', '.')
+            if re.search(r'^\s*(?:from|import)\s+' + re.escape(module_name) + r'\b', text, re.M) or \
+               re.search(r'^\s*(?:from|import)\s+' + re.escape(stem) + r'\b', text, re.M):
+                link(candidate, path, 'import', path)
 
     # 1. Direct calls: a test symbol (or anything contained in a test file) calls a production symbol.
     owner_test = {}
@@ -128,7 +157,7 @@ def discover_tests(graph: Graph) -> Graph:
 
     existing = {(e.source, e.target) for e in graph.edges if e.kind == 'tested_by'}
     for (symbol, test), info in sorted(links.items()):
-        if (symbol, test) not in existing:
+        if (symbol, test) not in existing and symbol in by_id and test in by_id:
             graph.edges.append(Edge(source=symbol, target=test, kind='tested_by'))
     graph.layers['tests'] = {
         'frameworks': dict(sorted(test_modules.items())),
@@ -142,7 +171,8 @@ def discover_tests(graph: Graph) -> Graph:
 
 LIMITATIONS = ('Heuristic: tests are linked by resolved direct calls, imports with a name reference, and file naming. '
                'Symbols with no link have no identified tests; that is not evidence they are untested. '
-               'Python test files are inventoried but Python symbols are not extracted, so pytest links are file-level only.')
+               'Python symbols are not extracted, so pytest files are linked file-to-file by naming convention and imports; '
+               'they are selected when an affected node lives in the linked file, which requires symbol nodes (TS/JS/Java).')
 
 
 def selector_for(framework: str, test_node, graph_root: str) -> dict:
@@ -171,15 +201,17 @@ def impacted_tests(graph: Graph, impact_result: dict) -> dict:
     frameworks = layer.get('frameworks', {})
     reasons = impact_result.get('reasons', {})
     affected = list(impact_result.get('affected', []))
-    module_of = {n.id: n.path for n in graph.nodes}
+    affected_paths = {by_id[a].path for a in affected if a in by_id}
     selected = {}
     for link in layer.get('links', []):
         symbol, test = link['symbol'], link['test']
-        if symbol not in affected:
+        if symbol not in affected and symbol not in affected_paths:
             continue
         test_node = by_id.get(test)
         if test_node is None:
-            continue
+            if test not in frameworks:
+                continue
+            test_node = Symbol(id=test, name=test, kind='module', path=test, start_line=1, end_line=1)
         entry = selected.setdefault(test, {
             'test_id': test, 'name': test_node.name, 'path': test_node.path,
             'framework': frameworks.get(test_node.path, 'unknown'),

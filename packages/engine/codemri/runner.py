@@ -15,8 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import mkdtemp
 
+from .ignore import write_copy_marker
+
 ALLOWED_TOOLS = {'mvn', 'npx', 'npm', 'node', 'pytest', 'python', 'python3', 'gradle', 'go', 'cargo'}
-COPY_EXCLUDED = {'.git', '.codemri', '.codemri-preview'}
+COPY_EXCLUDED = {'.git', '.codemri', '.codemri-preview', '.codemri-copy'}
 OUTPUT_LIMIT = 20_000  # characters kept per stream
 DEFAULT_TIMEOUT = 300
 
@@ -86,6 +88,7 @@ def copy_repository(root: Path) -> Path:
                     skip.append(name)
         return skip
     shutil.copytree(root, work, symlinks=True, ignore=ignore)
+    write_copy_marker(root, work)
     return work
 
 
@@ -182,13 +185,26 @@ def _empty(root: Path, timeout: int) -> dict:
             'note': 'No runnable test selected; nothing executed.'}
 
 
+STATUS_PRECEDENCE = ('error', 'timeout', 'failed', 'passed', 'no_tests')
+
+
+def aggregate_status(statuses) -> str:
+    """Overall status of several commands: error > timeout > failed > passed > no_tests. `no_tests` only when
+    every command found nothing; a run that passed real tests is reported as passed."""
+    statuses = list(statuses)
+    if not statuses:
+        return 'no_tests'
+    for status in STATUS_PRECEDENCE:
+        if status in statuses:
+            return status
+    return 'error'
+
+
 def run_in_copy(work: Path, commands: list[Command], timeout: int = DEFAULT_TIMEOUT) -> dict:
     """Run already-validated commands inside an existing isolated copy (used by the loop harness)."""
     started = time.monotonic()
     runs = [run_command(work, c, timeout) for c in commands]
-    status = 'passed' if all(r['status'] == 'passed' for r in runs) else \
-        'no_tests' if all(r['status'] in {'passed', 'no_tests'} for r in runs) else \
-        'timeout' if any(r['status'] == 'timeout' for r in runs) else 'failed'
+    status = aggregate_status([r['status'] for r in runs])
     totals = {k: sum(r.get('summary', {}).get(k, 0) for r in runs) for k in ('passed', 'failed', 'skipped')}
     return {'status': status, 'runs': runs, 'applied_files': [], 'timeout': timeout, 'totals': totals,
             'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),

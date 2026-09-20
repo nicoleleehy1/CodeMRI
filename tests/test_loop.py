@@ -3,7 +3,9 @@ from pathlib import Path
 import json
 import shutil
 import sys
+import subprocess
 import pytest
+from codemri.analyzer import analyze
 from codemri.loop import build_prompt, collect_usage, run_loop, main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,3 +65,24 @@ def test_cli_without_agent_reports_unchanged_copy(tmp_path, capsys):
     assert summary['tests'] == 'no_tests' and summary['files_changed'] == 0
     record = json.loads((tmp_path / 'out/run.json').read_text())
     assert record['agent']['status'] == 'skipped' and record['graph_diff']['nodes'] == []
+
+
+def test_baseline_skips_context_compilation_and_copy_keeps_tracked_ignored_files(tmp_path, monkeypatch):
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    (repo / 'generated').mkdir()
+    (repo / 'generated/client.ts').write_text('export function client() { return 1; }\n')
+    (repo / 'app.ts').write_text("import { client } from './generated/client';\nexport function run() { return client(); }\n")
+    (repo / '.gitignore').write_text('generated/\n')
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', '-C', str(repo), 'add', '-f', '.'], check=True)
+    baseline = run_loop(repo, 'change run', None, None, variant='baseline', test_timeout=30)
+    assert baseline['context']['included_in_prompt'] is False and baseline['context']['tokens'] == 0
+    assert baseline['timings_ms']['compile_context'] < baseline['timings_ms']['analyze'] + 50
+    assert 'generated/client.ts' in {n.path for n in analyze(repo).nodes}
+    assert baseline['graph_diff']['nodes'] == [], 'a .git-less copy must not drop tracked files that match .gitignore'
+    calls = []
+    import codemri.loop as loop_module
+    monkeypatch.setattr(loop_module, 'compile_context', lambda *a, **k: calls.append(a) or {'text': '', 'selected': [], 'excluded': [], 'tokens': 0, 'budget': 1, 'tokenizer': 'x', 'repository_tokens': 0})
+    run_loop(repo, 'change run', None, None, variant='baseline', test_timeout=30)
+    assert calls == []
