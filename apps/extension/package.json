@@ -42,6 +42,13 @@
           "scope": "machine",
           "description": "Path to the installed Codex CLI. Run codex login before using the coding chat."
         },
+        "codemri.agentContextBudget": {
+          "type": "number",
+          "default": 4000,
+          "minimum": 256,
+          "maximum": 16000,
+          "description": "Token budget for the CodeMRI context pack sent with each coding-chat task."
+        },
         "codemri.testTimeout": {
           "type": "number",
           "default": 300,

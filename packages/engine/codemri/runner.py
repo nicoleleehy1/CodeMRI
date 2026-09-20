@@ -161,25 +161,38 @@ def run_tests(root, selection, files=None, timeout: int = DEFAULT_TIMEOUT, keep_
     root = Path(root).resolve()
     commands = merge_junit(parse_commands(selection))
     if not commands:
-        return {'status': 'no_tests', 'runs': [], 'applied_files': [], 'root': str(root), 'timeout': timeout,
-                'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'duration_ms': 0,
-                'note': 'No runnable test selected; nothing executed.'}
+        return _empty(root, timeout)
     started = time.monotonic()
     work = copy_repository(root)
     try:
         applied = apply_files(work, files)
-        runs = [run_command(work, c, timeout) for c in commands]
+        result = run_in_copy(work, commands, timeout)
     finally:
         if not keep_copy:
             shutil.rmtree(work.parent, ignore_errors=True)
+    result.update(applied_files=applied, root=str(root), duration_ms=int((time.monotonic() - started) * 1000),
+                  isolation='temporary copy' + (' (kept at ' + str(work) + ')' if keep_copy else ', deleted after the run'))
+    return result
+
+
+def _empty(root: Path, timeout: int) -> dict:
+    return {'status': 'no_tests', 'runs': [], 'applied_files': [], 'root': str(root), 'timeout': timeout,
+            'totals': {'passed': 0, 'failed': 0, 'skipped': 0},
+            'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'duration_ms': 0,
+            'note': 'No runnable test selected; nothing executed.'}
+
+
+def run_in_copy(work: Path, commands: list[Command], timeout: int = DEFAULT_TIMEOUT) -> dict:
+    """Run already-validated commands inside an existing isolated copy (used by the loop harness)."""
+    started = time.monotonic()
+    runs = [run_command(work, c, timeout) for c in commands]
     status = 'passed' if all(r['status'] == 'passed' for r in runs) else \
         'no_tests' if all(r['status'] in {'passed', 'no_tests'} for r in runs) else \
         'timeout' if any(r['status'] == 'timeout' for r in runs) else 'failed'
     totals = {k: sum(r.get('summary', {}).get(k, 0) for r in runs) for k in ('passed', 'failed', 'skipped')}
-    return {'status': status, 'runs': runs, 'applied_files': applied, 'root': str(root), 'timeout': timeout,
-            'totals': totals, 'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-            'duration_ms': int((time.monotonic() - started) * 1000),
-            'isolation': 'temporary copy' + (' (kept at ' + str(work) + ')' if keep_copy else ', deleted after the run'),
+    return {'status': status, 'runs': runs, 'applied_files': [], 'timeout': timeout, 'totals': totals,
+            'started': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'duration_ms': int((time.monotonic() - started) * 1000), 'isolation': 'temporary copy',
             'note': 'Executed repository test commands in an isolated copy; the checkout was not modified.'}
 
 

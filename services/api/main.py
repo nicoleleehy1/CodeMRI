@@ -153,6 +153,10 @@ def run_selected_tests(repo_id: str, request: TestRunRequest):
     except (ValueError, OSError) as exc:
         raise HTTPException(400, str(exc))
     result['selection'] = [{'name': t.get('name'), 'path': t.get('path'), 'selector': t.get('selector', t)} for t in selection]
+    source_revision = analyze(root).revision
+    result['freshness'] = {'graph_revision': graph.revision, 'source_revision': source_revision, 'matches': source_revision == graph.revision}
+    if not result['freshness']['matches']:
+        result['note'] += ' Source changed since this graph was analyzed; test selection may be stale. Reanalyze to refresh.'
     result['id'] = store.save_run(repo_id, graph.revision, result)
     result['revision'] = graph.revision
     return result

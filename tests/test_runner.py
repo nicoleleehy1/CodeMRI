@@ -72,6 +72,10 @@ def test_api_runs_impacted_shop_tests_and_stores_results(tmp_path, monkeypatch):
         'files': [{'path': 'src/coupons.ts', 'before': None, 'after': 'export function applyCoupon(total: number, discount: number): number {\n  return total - discount;\n}\n'}]}).json()
     assert broken['status'] == 'failed' and broken['totals']['failed'] >= 1
     assert (work / 'src/coupons.ts').read_text().startswith('export function applyCoupon(total: number, discount: number): number {\n  return Math.max')
+    assert broken['freshness']['matches'] is True
+    (work / 'src/analytics.ts').write_text((work / 'src/analytics.ts').read_text() + '\n// edited after analysis\n')
+    stale = client.post(f'/graphs/{repo_id}/tests/run', json={'query': 'change trackPage', 'timeout': 120}).json()
+    assert stale['freshness']['matches'] is False and 'stale' in stale['note']
     runs = client.get(f'/graphs/{repo_id}/tests/runs').json()
-    assert [r['status'] for r in runs] == ['failed', 'passed'] and runs[0]['revision'] == run['revision']
+    assert [r['status'] for r in runs] == ['passed', 'failed', 'passed'] and runs[0]['revision'] == run['revision']
     assert client.post(f'/graphs/{repo_id}/tests/run', json={'selection': [{'tool': 'sh', 'args': ['-c', 'true']}]}).status_code == 400

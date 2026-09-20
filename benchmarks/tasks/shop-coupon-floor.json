@@ -1,0 +1,9 @@
+{
+  "id": "shop-coupon-floor",
+  "repo": "examples/shop",
+  "description": "Fixture task on the TypeScript shop example. The expected behavior is stated only as a task; no patch or hidden test is given to the agent.",
+  "task": "applyCoupon must never return a negative total: a discount larger than the total should produce 0. Keep the existing pricing tests passing and add coverage for the new floor if it is missing.",
+  "budget": 4000,
+  "test_timeout": 300,
+  "agent_timeout": 1800
+}

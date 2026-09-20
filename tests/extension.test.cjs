@@ -54,7 +54,7 @@ test('extension bridges graph clicks and editor selections; blocks stale jumps',
         child.emit('close',0,null);
       });return child;
     }}:nativeRequire(id),URL,AbortSignal,
-    fetch:async(url,options)=>{fetched.push({url,body:options?.body});return {ok:true,json:async()=>url.endsWith('/tests/run')?{status:'failed',totals:{passed:1,failed:1,skipped:0},runs:[{tool:'npx',args:['tsx','--test','tests/pricing.test.ts'],status:'failed',exit_code:1,stdout:'not ok 1 - discount'}],duration_ms:1200}:url.endsWith('/freshness')?{revision:freshness}:url.endsWith('/preview')?{graph:responseGraph,baseline:responseGraph,changes:{nodes:[],edges:[]},files:JSON.parse(options.body).files.map(file=>({path:file.path,status:'modified',lines:[]}))}:{repo_id:'demo',graph:responseGraph}};}});
+    fetch:async(url,options)=>{fetched.push({url,body:options?.body});return {ok:true,json:async()=>url.endsWith('/context')?{text:'PACK TEXT',selected:['coupon'],excluded:[],tokens:42,budget:4000}:url.endsWith('/tests/run')?{status:'failed',totals:{passed:1,failed:1,skipped:0},runs:[{tool:'npx',args:['tsx','--test','tests/pricing.test.ts'],status:'failed',exit_code:1,stdout:'not ok 1 - discount'}],duration_ms:1200}:url.endsWith('/freshness')?{revision:freshness}:url.endsWith('/preview')?{graph:responseGraph,baseline:responseGraph,changes:{nodes:[],edges:[]},files:JSON.parse(options.body).files.map(file=>({path:file.path,status:'modified',lines:[]}))}:{repo_id:'demo',graph:responseGraph}};}});
   mod.exports.activate({extensionUri:uri(path.resolve('apps/extension')),subscriptions:[],workspaceState:{get:key=>state.get(key),update:async(key,value)=>{state.set(key,value);}}});
   await commands.get('codemri.analyze')();
   assert.ok(sent.some(m=>m.type==='graph'));
@@ -118,6 +118,13 @@ test('extension bridges graph clicks and editor selections; blocks stale jumps',
   assert.equal(proposal.designComparison,true);
   assert.equal(fs.readFileSync(path.join(root,'src/coupons.ts'),'utf8'),'original working file');
   assert.ok(!fs.existsSync(path.join(root,'new.ts')));
+  confirmTests='Run tests';
+  await receive({type:'runTests',query:'apply coupon'});
+  const proposalRun=fetched.at(-1);
+  assert.ok(proposalRun.url.endsWith('/tests/run'));
+  assert.deepEqual(JSON.parse(proposalRun.body).files.map(f=>f.path).sort(),['new.ts','src/coupons.ts'],'tests run against the pending proposal, not the checkout');
+  assert.equal(sent.at(-1).result.proposalId,proposal.proposalId);
+  assert.equal(fs.readFileSync(path.join(root,'src/coupons.ts'),'utf8'),'original working file');
   await receive({type:'proposalDecision',proposalId:'stale-id',paths:['src/coupons.ts'],action:'approve'});
   assert.equal(fs.readFileSync(path.join(root,'src/coupons.ts'),'utf8'),'original working file');
   await receive({type:'proposalDecision',proposalId:proposal.proposalId,paths:['src/coupons.ts'],action:'approve'});
@@ -125,6 +132,21 @@ test('extension bridges graph clicks and editor selections; blocks stale jumps',
   assert.ok(!fs.existsSync(path.join(root,'new.ts')),'Unselected proposal must remain unapplied');
   await receive({type:'proposalDecision',proposalId:proposal.proposalId,paths:['new.ts'],action:'discard'});
   assert.ok(!fs.existsSync(path.join(root,'new.ts')),'Discard must not apply the proposed addition');
+  await receive({type:'chatSend',prompt:'Add coupon stacking'});
+  const contextCall=fetched.find(f=>f.url.endsWith('/graphs/demo/context')&&JSON.parse(f.body).query==='Add coupon stacking');
+  assert.ok(contextCall,'chat compiles a CodeMRI context pack for the agent');
+  assert.equal(JSON.parse(contextCall.body).budget,4000);
+  const chatPrompt=invocations.at(-1).child.stdin.read().toString();
+  assert.match(chatPrompt,/Task:\nAdd coupon stacking/);
+  assert.match(chatPrompt,/Relevant context compiled by CodeMRI[\s\S]*PACK TEXT/);
+  const chatProposal=sent.filter(m=>m.proposalId).at(-1);
+  await receive({type:'proposalDecision',proposalId:chatProposal.proposalId,paths:chatProposal.files.map(f=>f.path),action:'discard'});
+  freshness='moved';
+  const analyzesBefore=fetched.filter(f=>f.url.endsWith('/analyze')).length;
+  await receive({type:'chatSend',prompt:'Second task'});
+  assert.equal(fetched.filter(f=>f.url.endsWith('/analyze')).length,analyzesBefore+1,'stale source is reanalyzed before compiling context');
+  assert.ok(fetched.findIndex(f=>f.url.endsWith('/analyze'))<fetched.findIndex(f=>f.url.endsWith('/context')&&JSON.parse(f.body).query==='Second task'));
+  freshness='demo';
 
 });
 
