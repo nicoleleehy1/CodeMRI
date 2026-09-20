@@ -171,3 +171,29 @@ def test_surefire_aggregate_is_not_double_counted():
            '[INFO] Tests run: 2, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.1 s - in a.BTest\n'
            '[INFO] Results:\n[ERROR] Tests run: 5, Failures: 1, Errors: 0, Skipped: 0\n')
     assert summarize('mvn', out, '') == {'passed': 4, 'failed': 1, 'skipped': 0, 'no_tests_ran': False}
+
+
+def test_run_process_times_out_when_child_never_reads_large_stdin(tmp_path):
+    import subprocess, time
+    from codemri.runner import run_process, scrubbed_env
+    (tmp_path / 'sleepy.py').write_text('import time\ntime.sleep(30)\n')
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_process(['python3', 'sleepy.py'], tmp_path, scrubbed_env(), timeout=2, stdin_text='x' * 2_000_000)
+    assert time.monotonic() - started < 15
+
+
+def test_copy_leaves_out_secret_files(tmp_path):
+    from codemri.runner import copy_repository
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src/a.js').write_text('1')
+    (tmp_path / '.env').write_text('TOKEN=abc')
+    (tmp_path / 'id_rsa').write_text('key')
+    work = copy_repository(tmp_path)
+    assert (work / 'src/a.js').is_file() and not (work / '.env').exists() and not (work / 'id_rsa').exists()
+
+
+def test_all_skipped_suite_is_not_no_tests():
+    from codemri.runner import summarize
+    counts = summarize('pytest', '3 skipped in 0.10s', '')
+    assert counts['skipped'] == 3 and counts['no_tests_ran'] is False

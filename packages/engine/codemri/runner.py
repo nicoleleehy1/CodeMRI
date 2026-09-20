@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import mkdtemp
 
-from .ignore import write_copy_marker
+from .ignore import is_secret_file, write_copy_marker
 
 ALLOWED_TOOLS = {'mvn', 'npx', 'npm', 'node', 'pytest', 'python', 'python3', 'gradle', 'go', 'cargo'}
 COPY_EXCLUDED = {'.git', '.codemri', '.codemri-preview', '.codemri-copy'}
@@ -72,7 +72,8 @@ def merge_junit(commands: list[Command]) -> list[Command]:
 
 
 def copy_repository(root: Path) -> Path:
-    """Copy `root` to a private temporary directory. Symlinks are kept only when they resolve inside the tree."""
+    """Copy `root` to a private temporary directory. Symlinks are kept only when they resolve inside the tree; credential
+    files (`.env`, key material - see `ignore.SECRET_FILES`) are left out so repository tests cannot read them."""
     root = Path(root).resolve()
     directory = Path(mkdtemp(prefix='codemri-run-'))
     work = directory / 'workspace'
@@ -81,7 +82,7 @@ def copy_repository(root: Path) -> Path:
         skip = []
         for name in names:
             source = Path(directory_) / name
-            if name in COPY_EXCLUDED:
+            if name in COPY_EXCLUDED or (is_secret_file(name) and not source.is_dir()):
                 skip.append(name)
             elif source.is_symlink():
                 target = Path(os.readlink(source))
@@ -136,7 +137,7 @@ def summarize(tool: str, stdout: str, stderr: str) -> dict:
     elif Path(tool).name in {'pytest', 'python', 'python3'} and (m := PYTEST_SUMMARY.search(text)) and any(m.groupdict().values()):
         g = {k: int(v or 0) for k, v in m.groupdict().items()}
         counts = {'passed': g['passed'], 'failed': g['failed'] + g['errors'], 'skipped': g['skipped']}
-    counts['no_tests_ran'] = bool(NO_TESTS.search(text)) or (bool(counts) and counts.get('passed', 0) + counts.get('failed', 0) == 0)
+    counts['no_tests_ran'] = bool(NO_TESTS.search(text)) or (bool(counts) and counts.get('passed', 0) + counts.get('failed', 0) + counts.get('skipped', 0) == 0)
     return counts
 
 
@@ -215,12 +216,20 @@ def run_process(args: list[str], cwd: Path, env: dict, timeout: int, stdin_text:
     proc = subprocess.Popen(args, **popen_kwargs)
     out, err = BoundedCapture(proc.stdout), BoundedCapture(proc.stderr)
     if stdin_text is not None:
-        try:
-            proc.stdin.write(stdin_text)
-        except (BrokenPipeError, OSError):
-            pass
-        finally:
-            proc.stdin.close()
+        import threading
+
+        def feed():
+            try:
+                proc.stdin.write(stdin_text)
+            except (BrokenPipeError, OSError):
+                pass
+            finally:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+        # On a thread: a child that never reads stdin must not block the caller before the timeout starts.
+        threading.Thread(target=feed, daemon=True).start()
     deadline = time.monotonic() + timeout
     try:
         proc.wait(timeout=timeout)

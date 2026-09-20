@@ -247,8 +247,10 @@ export function activate(context: vscode.ExtensionContext) {
           busy=true; void send({type:'status',message:'Running impacted tests in an isolated copy…'});
           try {
             const testTimeout=setting('testTimeout',300,5,3600);
-            // Several commands may run back to back; give the request the configured budget per command plus copy/API overhead.
-            const result=await api(`/graphs/${repoId}/tests/run`,{query,files,timeout:testTimeout},(testTimeout*4+120)*1000);
+            // Commands run back to back, each with the configured budget; size the request deadline from the actual selection.
+            const preview=await api(`/graphs/${repoId}/impact`,{query});
+            const commandCount=Math.max(1,new Set((preview?.tests?.tests??[]).filter((t:any)=>t?.selector?.tool).map((t:any)=>JSON.stringify(t.selector))).size);
+            const result=await api(`/graphs/${repoId}/tests/run`,{query,files,timeout:testTimeout},(testTimeout*commandCount+120)*1000);
             result.proposalId=pending?.id;
             void send({type:'testResults',result});
           } finally {busy=false;}

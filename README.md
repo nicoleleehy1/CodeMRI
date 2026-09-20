@@ -43,6 +43,7 @@ source .venv/bin/activate
 pip install -r requirements-lock.txt
 npm ci
 npm run build
+npm ci --prefix examples/shop   # tsx runner for the TS demo fixture's impacted tests (not in the root workspace)
 python -m uvicorn services.api.main:app --host 127.0.0.1 --port 8000
 ```
 

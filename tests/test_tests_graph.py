@@ -103,3 +103,14 @@ def test_python_only_repo_selects_pytest_file_from_change_intent(tmp_path):
     assert 'calc.py' in result['affected']
     assert [t['path'] for t in result['tests']['tests']] == ['tests/test_calc.py']
     assert result['tests']['tests'][0]['selector']['tool'] in {'pytest', 'python', 'python3'}
+
+
+def test_js_frameworks_get_their_own_runner_or_no_command():
+    from types import SimpleNamespace
+    from codemri.tests_graph import selector_for
+    node = SimpleNamespace(path='tests/user.test.ts', kind='call_expression', name='x')
+    assert framework_of('tests/user.test.ts', "import { describe, expect } from 'vitest'") == 'vitest'
+    assert selector_for('vitest', node, '.') == {'tool': 'npx', 'args': ['vitest', 'run', 'tests/user.test.ts']}
+    assert framework_of('tests/user.test.ts', "import { jest } from '@jest/globals'") == 'jest'
+    assert framework_of('tests/user.test.js', "const assert = require('assert'); describe('x', () => {})") == 'js-test'
+    assert selector_for('js-test', node, '.')['tool'] is None  # unknown runner: never manufacture a command

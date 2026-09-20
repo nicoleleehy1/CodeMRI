@@ -15,6 +15,11 @@ JS_TEST_FILE = re.compile(r'\.(test|spec)\.[cm]?[jt]sx?$')
 PY_TEST_FILE = re.compile(r'(^|/)(test_[^/]*\.py|[^/]*_test\.py)$')
 JAVA_TEST_ANNOTATION = re.compile(r'@(Test|ParameterizedTest|RepeatedTest|TestFactory)\b')
 NODE_TEST_CALL = re.compile(r'(?:^|[;\s])(?:test|it|describe)\s*\(', re.M)
+JS_FRAMEWORK_IMPORTS = (
+    ('vitest', re.compile(r"""from\s+['"]vitest['"]|require\(['"]vitest['"]\)""")),
+    ('jest', re.compile(r"""from\s+['"]@jest/globals['"]|require\(['"]@jest/globals['"]\)|\bjest\.(fn|mock|spyOn)\(""")),
+    ('mocha', re.compile(r"""from\s+['"]mocha['"]|require\(['"]mocha['"]\)""")),
+)
 JAVA_TEST_METHOD_SKIP = {'setup', 'setUp', 'teardown', 'tearDown', 'beforeEach', 'afterEach', 'beforeAll', 'afterAll'}
 
 
@@ -24,7 +29,12 @@ def framework_of(path: str, source: str) -> str | None:
             return 'junit'
         return None
     if JS_TEST_FILE.search(path) or (TEST_PATH.search(path) and NODE_TEST_CALL.search(source)):
-        return 'node:test' if 'node:test' in source else 'js-test'
+        if 'node:test' in source:
+            return 'node:test'
+        for framework, marker in JS_FRAMEWORK_IMPORTS:
+            if marker.search(source):
+                return framework
+        return 'js-test'  # a test file, but the runner is unknown: linked in the graph, never given a command
     if PY_TEST_FILE.search(path):
         return 'pytest'
     return None
@@ -182,10 +192,16 @@ def selector_for(framework: str, test_node, graph_root: str) -> dict:
         if test_node.kind == 'method_declaration':
             return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}#{test_node.name}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
         return {'tool': 'mvn', 'args': ['-q', f'-Dtest={cls}', '-Dsurefire.failIfNoSpecifiedTests=false', 'test']}
-    if framework in {'node:test', 'js-test'}:
+    if framework == 'node:test':
         if re.search(r'\.[cm]?tsx?$', test_node.path):
             return {'tool': 'npx', 'args': ['tsx', '--test', test_node.path]}
         return {'tool': 'node', 'args': ['--test', test_node.path]}
+    if framework == 'vitest':
+        return {'tool': 'npx', 'args': ['vitest', 'run', test_node.path]}
+    if framework == 'jest':
+        return {'tool': 'npx', 'args': ['jest', '--runTestsByPath', test_node.path]}
+    if framework == 'mocha':
+        return {'tool': 'npx', 'args': ['mocha', test_node.path]}
     if framework == 'pytest':
         return {'tool': 'pytest', 'args': ['-q', test_node.path]}
     return {'tool': None, 'args': []}
