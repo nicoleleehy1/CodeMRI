@@ -66,10 +66,10 @@ const segments = points => points.slice(1).map((b,i)=>[points[i],b]);
 function simplify(points) {
   const result=[];
   for(const p of points){
-    if(result.length&&distance(result.at(-1),p)<EPS)continue;
+    if(result.length&&result.at(-1).x===p.x&&result.at(-1).y===p.y)continue;
     while(result.length>1){const a=result.at(-2),b=result.at(-1);
-      if((Math.abs(a.x-b.x)<EPS&&Math.abs(b.x-p.x)<EPS&&(b.y-a.y)*(p.y-b.y)>=0) ||
-         (Math.abs(a.y-b.y)<EPS&&Math.abs(b.y-p.y)<EPS&&(b.x-a.x)*(p.x-b.x)>=0))result.pop();else break;
+      if((a.x===b.x&&b.x===p.x&&(b.y-a.y)*(p.y-b.y)>=0) ||
+         (a.y===b.y&&b.y===p.y&&(b.x-a.x)*(p.x-b.x)>=0))result.pop();else break;
     }
     result.push(p);
   }

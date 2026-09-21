@@ -179,7 +179,12 @@ export function activate(context: vscode.ExtensionContext) {
     panel.webview.onDidReceiveMessage(async message=>{
       try {
         if (!message || typeof message.type !== 'string') return;
-        if (message.type==='ready') { await restore; if(graph) void send({type:'graph',graph,stale,...review}); sync(vscode.window.activeTextEditor); void send({type:'chatHistory',messages:chat,running:agentRunning}); if(pending?.files.length)await showPending(); }
+        if (message.type==='ready') {
+          await restore;
+          // Opening the panel starts with an empty canvas; analysis is explicit.
+          void send({type:'chatHistory',messages:chat,running:agentRunning});
+          if(pending?.files.length)void send({type:'status',message:'Saved changes are awaiting review. Choose Analyze calls to open them.'});
+        }
         if (message.type==='designSave') {await saveDesign(message.draft);void send({type:'designSaved'});}
         if (message.type==='designRun') {
           if(designRunning)throw new Error('An architecture operation is already running.');
@@ -194,7 +199,7 @@ export function activate(context: vscode.ExtensionContext) {
           review=await api(`/graphs/${repoId}/review`,{revision:graph.revision});
           void send({type:'graph',graph,stale,...review});
         }
-        if (message.type==='analyze' && !agentRunning && !pending) await scan();
+        if (message.type==='analyze' && !agentRunning) await scan();
         if (message.type==='generateAI' && !agentRunning && !pending) {
           if(!repoId || stale) await scan();
           if(!repoId || stale) return;

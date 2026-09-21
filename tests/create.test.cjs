@@ -79,7 +79,7 @@ test('orthogonal routes detour around intervening cards, including reverse edges
   const result=layout.routeCreate(nodes,edges,positions);
   assertRoutesClear(nodes,edges,positions,result);
   assert.ok(result.routes.find(r=>r.id==='forward').points.length>2);
-  positions.block={x:100,y:145}; // Move an unrelated obstacle into an edge's possible channel.
+  positions.block={x:100.0001,y:145.0001}; // Move an unrelated obstacle into an edge's possible channel.
   assertRoutesClear(nodes,edges,positions,layout.routeCreate(nodes,edges,positions));
 });
 test('dense saved-grid draft routes safely without requiring automatic arrangement',()=>{

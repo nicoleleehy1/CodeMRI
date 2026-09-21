@@ -19,6 +19,7 @@ apps/extension/media/graph.bundle.js
 
 # Separately cloned demo fixture (see README, MemMunkDB demo)
 examples/MemMunkDB/
+examples/Stoich/
 
 # Editor and OS files. Keep the shared debug/build config.
 .DS_Store

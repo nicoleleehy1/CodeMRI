@@ -13,6 +13,19 @@
         "${workspaceFolder}/apps/extension/dist/**/*.js"
       ],
       "preLaunchTask": "build extension"
+    },
+    {
+      "name": "CodeMRI: Stoich create demo",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/apps/extension",
+        "${workspaceFolder}/examples/Stoich"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/apps/extension/dist/**/*.js"
+      ],
+      "preLaunchTask": "build extension"
     }
   ]
 }
