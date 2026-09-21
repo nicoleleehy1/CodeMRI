@@ -6,6 +6,15 @@
 
 This HackMIT prototype starts with a repository-wide system architecture view, then drills into modules and symbols. It inventories multiple languages, manifests, and deployment configuration; Tree-sitter provides Java and TS/JS symbol analysis. The persistent graph connects to source locations in VS Code. Local analysis, graph navigation, impact analysis, and context compilation need no API key or hosted service. AI architecture generation is optional and requires an OpenAI API key.
 
+<img width="3232" height="1972" alt="3332112F-BB6D-473D-8CD5-6BCDAFF16B2B" src="https://github.com/user-attachments/assets/be735377-ec83-40b1-804c-b88e9cad1c91" />
+<img width="1616" height="991" alt="Screenshot 2026-09-20 at 10 16 04 AM" src="https://github.com/user-attachments/assets/258eebe7-434d-466c-bfb3-cdacf0202f55" />
+<img width="1616" height="991" alt="Screenshot 2026-09-20 at 10 14 12 AM" src="https://github.com/user-attachments/assets/90c38160-b292-496c-9968-36c23ea39c68" />
+<img width="3232" height="1982" alt="472D5778-50D5-4A8D-9D05-9938E0252324" src="https://github.com/user-attachments/assets/3d504624-3e0f-4e13-b30f-e96bf160c5d2" />
+
+<!-- <img width="3232" height="1972" alt="F891241F-8C54-406F-9C61-20D049AEE0D6" src="https://github.com/user-attachments/assets/52f03912-a538-417c-99a2-29da1175cbd7" />
+<img width="1626" height="1500" alt="C7C93FE8-FE21-45EB-95B3-7784098E51D6" src="https://github.com/user-attachments/assets/4543dcef-01af-4747-b793-314d31082c98" />
+<img width="1278" height="1630" alt="D87F3B04-54FF-410B-BA17-C4EE8379303F" src="https://github.com/user-attachments/assets/a69a7c51-933c-443d-ace7-c8b6d3455589" /> -->
+
 
 ## Product thesis
 
